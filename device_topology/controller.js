@@ -1340,6 +1340,18 @@ function renderService() {
 
 function firmwareOf() { return state.client['deviceInfo.fwVersion'] || null; }
 
+/** "Update available" beside the versions when the firmware index holds a newer release for the device's board. */
+function updateChip(el, hw, fw) {
+  window.TerrySenseFirmwareIndex.load().then(function (index) {
+    var up = window.TerrySenseFirmwareIndex.updateFor(index, hw, fw);
+    if (!up) { return; }
+    el.className = 'ts-chip accent';
+    el.textContent = !up.version ? t('device.updateNewer', 'newer firmware available')
+      : up.final ? t('device.updateAvailable', '{version} available', { version: up.version })
+        : t('device.updatePreRelease', '{version} available · pre-release', { version: up.version });
+  }).catch(function () {});
+}
+
 /** Left pane: the product image beside its verdict (TC-3), uplink, versions and
  * operational status; for a device that cannot report them, the register below. */
 function renderStatus(pane) {
@@ -1389,7 +1401,8 @@ function renderStatus(pane) {
   }
   if (fw || hw) {
     kv(t('common.versions', 'Versions'), null, '<span class="ts-mono">' + esc([fw ? t('device.firmwareVersion', 'firmware {v}', { v: fw }) : '',
-      hw ? t('device.hardwareVersion', 'hardware {v}', { v: hw }) : ''].filter(Boolean).join(' · ')) + '</span>');
+      hw ? t('device.hardwareVersion', 'hardware {v}', { v: hw }) : ''].filter(Boolean).join(' · ')) + '</span> <span class="ts-dev-update"></span>');
+    updateChip(facts.lastChild.querySelector('.ts-dev-update'), hw, fw);
   }
   var status = statusSection();
   if (status) { facts.appendChild(status); }

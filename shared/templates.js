@@ -29,6 +29,8 @@ root.TerrySenseTemplates = function (ui, tb) {
   var HOME_LINKS = ['projects', 'installation', 'settings'];
   var HOME_GROUP = 'Project home dashboards';
   var HOME_KEY = 'config.homeDashboard';
+  // Fixed texts ThingsBoard already translates, by its own keys (I18N.md §2).
+  var TB_TEXT = { alarms: '{i18n:alarm.alarms}', latest: '{i18n:widget.latest}', off: '{i18n:widgets.status-widget.off}', on: '{i18n:widgets.status-widget.on}' };
 
   function uuid() {
     if (root.crypto && root.crypto.randomUUID) { return root.crypto.randomUUID(); }
@@ -58,6 +60,15 @@ root.TerrySenseTemplates = function (ui, tb) {
     }[chart] || chart;
   }
 
+  /** What a native widget shows for channel `key` labelled `shown`: the dictionary
+   * label as its translation key, which ThingsBoard renders in each reader's
+   * language, an instance keeping its number; a label a level sets stays as typed. */
+  function boundLabel(key, shown, names) {
+    var sp = resolver.splitChannelKey(key), label = (names[sp.name] || {}).label;
+    var n = sp.instance != null ? ' ' + sp.instance : '';
+    return label && shown === label + n ? '{i18n:custom.terrysense.channel.' + sp.name + '}' + n : shown;
+  }
+
   /** A name's `chart`, else its kind's, else what its kind's alarm type suggests. */
   function chartOf(channel, names, kinds) {
     var e = names[resolver.splitChannelKey(channel).name] || {};
@@ -76,8 +87,9 @@ root.TerrySenseTemplates = function (ui, tb) {
       return !e.diagnostic && !e.rule;
     }).sort(function (a, b) { return rank(a) - rank(b); }).map(function (c) {
       var e = names[resolver.splitChannelKey(c).name] || {};
+      var shown = attrs['effective.' + c + '.label'] || e.label || c;
       return {
-        key: c, label: attrs['effective.' + c + '.label'] || e.label || c, unit: attrs['effective.' + c + '.unit'] || '',
+        key: c, label: shown, bound: boundLabel(c, shown, names), unit: attrs['effective.' + c + '.unit'] || '',
         text: root.TerrySenseT.label(c, attrs['effective.' + c + '.label'] || e.label || c, names),
         chart: chartOf(c, names, kinds), states: e.states || null,
         whenTrue: attrs['effective.' + c + '.textWhenTrue'], whenFalse: attrs['effective.' + c + '.textWhenFalse']
@@ -115,7 +127,7 @@ root.TerrySenseTemplates = function (ui, tb) {
   /** `obj` from a model with the placeholders of channel `c` filled in; `from`/`to` swaps an alias id too. */
   function fill(obj, c, from, to) {
     var text = JSON.stringify(obj).split(PLACEHOLDER.channel).join(jsonText(c.key))
-      .split(PLACEHOLDER.label).join(jsonText(c.label)).split(PLACEHOLDER.unit).join(jsonText(c.unit));
+      .split(PLACEHOLDER.label).join(jsonText(c.bound || c.label)).split(PLACEHOLDER.unit).join(jsonText(c.unit));
     if (from && to) { text = text.split(from).join(to); }
     return JSON.parse(text);
   }
@@ -124,12 +136,15 @@ root.TerrySenseTemplates = function (ui, tb) {
   function copyModel(models, modelId, c, alias) {
     var copy = fill(models.dashboard.configuration.widgets[modelId], c, models.alias, alias);
     copy.id = uuid();
-    copy.config.title = c.label;
+    copy.config.title = c.bound || c.label;
     if (copy.typeFullFqn === 'system.state_chart') {
+      var name = resolver.splitChannelKey(c.key).name;
       copy.config.settings.states = c.states
-        ? Object.keys(c.states).map(function (v) { return { label: c.states[v], value: Number(v), sourceType: 'constant', sourceValue: Number(v) }; })
-        : [{ label: c.whenFalse || 'Off', value: 0, sourceType: 'constant', sourceValue: false },
-           { label: c.whenTrue || 'On', value: 1, sourceType: 'constant', sourceValue: true }];
+        ? Object.keys(c.states).map(function (v) {
+          return { label: '{i18n:custom.terrysense.state.' + name + '.' + c.states[v] + '}', value: Number(v), sourceType: 'constant', sourceValue: Number(v) };
+        })
+        : [{ label: c.whenFalse || TB_TEXT.off, value: 0, sourceType: 'constant', sourceValue: false },
+           { label: c.whenTrue || TB_TEXT.on, value: 1, sourceType: 'constant', sourceValue: true }];
     }
     return copy;
   }
@@ -352,7 +367,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         var it = cat.by[c.key];
         if (!it) {
           var vocab = names[resolver.splitChannelKey(c.key).name] || {};
-          it = cat.by[c.key] = { key: c.key, label: vocab.label || c.label, unit: c.unit, chart: c.chart, at: {},
+          it = cat.by[c.key] = { key: c.key, label: vocab.label || c.label, bound: boundLabel(c.key, vocab.label || c.label, names), unit: c.unit, chart: c.chart, at: {},
             text: vocab.label ? root.TerrySenseT.channel(resolver.splitChannelKey(c.key).name, vocab.label) : c.text || c.label };
           cat.keys.push(c.key);
         }
@@ -422,7 +437,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       return { type: 'entity', name: '', entityAliasId: aliasOf(st.id),
         dataKeys: mine.map(function (x) {
           var key = fill(mds.dataKeys[0], x.c);
-          key.label = multi ? st.name + ' · ' + x.c.label : x.c.label;
+          key.label = multi ? st.name + ' · ' + (x.c.bound || x.c.label) : x.c.bound || x.c.label;
           key.color = PALETTE[n++ % PALETTE.length];
           if (units.length > 1) { key.settings = Object.assign(key.settings || {}, { yAxisId: axis(x.c.key) }); }
           return key;
@@ -450,13 +465,13 @@ root.TerrySenseTemplates = function (ui, tb) {
     ds.entityAliasId = alias;
     ds.dataKeys = [ds.dataKeys[0]].concat(keys.map(function (k) { return tableKey(cat.by[k]); }));
     w.config.actions = {};
-    w.config.title = 'Latest values';
-    Object.assign(w.config.settings, { entitiesTitle: 'Latest values', displayEntityLabel: false, displayEntityType: false });
+    w.config.title = TB_TEXT.latest;
+    Object.assign(w.config.settings, { entitiesTitle: TB_TEXT.latest, displayEntityLabel: false, displayEntityType: false });
     return w;
   }
 
   function tableKey(c) {
-    return { name: c.key, type: 'timeseries', label: c.label + (c.unit ? ' (' + c.unit + ')' : ''), units: c.unit, decimals: 2, settings: {} };
+    return { name: c.key, type: 'timeseries', label: (c.bound || c.label) + (c.unit ? ' (' + c.unit + ')' : ''), units: c.unit, decimals: 2, settings: {} };
   }
 
   /** The stations of `plan` chart `ch` draws: those still picked that measure one of its channels. */
@@ -496,7 +511,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         top = 1;
       }
       place(mapWidget(got[1], listId, plan.title), models.alarms ? 14 : 24, 10, top, 0);
-      if (models.alarms) { place(copyModel(models, models.alarms, { key: '', label: 'Active alarms', unit: '' }, listId), 10, 10, top, 14); }
+      if (models.alarms) { place(copyModel(models, models.alarms, { key: '', label: TB_TEXT.alarms, unit: '' }, listId), 10, 10, top, 14); }
       var row = top + 10;
       var listed = plan.cat.keys.filter(function (k) { return plan.stations.some(function (st) { return plan.cat.by[k].at[st.id]; }); });
       if (models.table && listed.length) {
@@ -508,7 +523,8 @@ root.TerrySenseTemplates = function (ui, tb) {
         var sts = chartStations(plan, ch);
         var high = mlayout.widgets[models.ids[ch.chart]].sizeY;
         (ch.together ? [sts] : sts.map(function (st) { return [st]; })).forEach(function (g) {
-          place(chartWidget(models, plan.cat, ch, g, aliasOf, ch.together || sts.length < 2 ? ch.title : g[0].name + ' · ' + ch.title), 24, high, row, 0);
+          var title = ch.channels.length === 1 && ch.title === plan.cat.by[ch.channels[0]].label ? plan.cat.by[ch.channels[0]].bound : ch.title;
+          place(chartWidget(models, plan.cat, ch, g, aliasOf, ch.together || sts.length < 2 ? title : g[0].name + ' · ' + title), 24, high, row, 0);
           row += high;
         });
       });

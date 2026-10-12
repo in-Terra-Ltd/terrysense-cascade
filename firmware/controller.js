@@ -8,7 +8,7 @@
  * the download; the other versions stay listed under it. A pre-release is shown
  * only when no final release of that family exists.
  *
- * Loads after shared/resolver.js, glossary.js, ui.js and tb_io.js.
+ * Loads after shared/resolver.js, glossary.js, ui.js, tb_io.js and firmware_index.js.
  */
 
 window.TerrySenseFirmware = function (ctx, container, opts) {
@@ -24,26 +24,8 @@ var h = ui.h, esc = ui.esc, ICON = ui.ICON;
 var ICON_CHIP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="1"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg>';
 var ICON_DOWNLOAD = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>';
 
-var INDEX_BASE = 'https://git.in-terra.ch/api/v4/projects/project%2Flogr%2Ffirmware-logr-releases/packages/generic/logr-fw-index/';
 var BOARD = /^(LOGR|DRYC)(\d+)(?:\.\d+)+$/;
-
-/** Production's index on the production host, staging's everywhere else. */
-function indexUrl() {
-  return INDEX_BASE + (window.location.hostname === 'sense.terryspace.io' ? 'production' : 'staging') + '/index.json';
-}
-
-/** The order of FIRMWARE_DELIVERY.md §2: X.Y.Z, then -devN < -rcN < final, N as a number. */
-function compareVersions(a, b) {
-  function parts(v) {
-    var m = /^(\d+)\.(\d+)\.(\d+)(?:-(dev|rc)(\d+))?$/.exec(v) || [];
-    return [+m[1] || 0, +m[2] || 0, +m[3] || 0, m[4] === 'dev' ? 0 : m[4] === 'rc' ? 1 : 2, +m[5] || 0];
-  }
-  var x = parts(a), y = parts(b);
-  for (var i = 0; i < 5; i++) { if (x[i] !== y[i]) { return x[i] - y[i]; } }
-  return 0;
-}
-
-function isFinal(v) { return /^\d+\.\d+\.\d+$/.test(v); }
+var fwi = window.TerrySenseFirmwareIndex, compareVersions = fwi.compare, isFinal = fwi.isFinal;
 
 function boardOrder(a, b) { return compareVersions(a.replace(/^\D+/, '') + '.0.0', b.replace(/^\D+/, '') + '.0.0'); }
 
@@ -72,10 +54,7 @@ function families(boards) {
   });
 }
 
-/** The entry a technician should take: the highest final, else the highest pre-release. */
-function current(list) {
-  return list.filter(function (p) { return isFinal(p.version); })[0] || list[0];
-}
+var current = fwi.current;
 
 function imageLine(p) {
   return (p.images || []).map(function (i) { return esc(i.name) + ' ' + esc(i.version); }).join(' · ');
@@ -171,12 +150,7 @@ function render(all) {
   });
 }
 
-// No credentials: the index is public and GitLab answers any origin.
-fetch(indexUrl(), { cache: 'no-store', credentials: 'omit' }).then(function (r) {
-  if (r.status === 404) { return { boards: {} }; }
-  if (!r.ok) { throw { status: r.status }; }
-  return r.json();
-}).then(function (index) {
+fwi.load().then(function (index) {
   var all = families(index.boards);
   var n = all.length;
   cardEl.querySelector('.ts-subtitle').textContent = n === 1 ? t('firmware.countOne', '1 firmware') : t('firmware.countMany', '{n} firmwares', { n: n });
