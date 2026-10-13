@@ -251,7 +251,7 @@ var cardEl = h(
   '    <button type="button" class="ts-btn ts-proj-refresh">' + esc(t('common.refresh', 'Refresh')) + '</button></div>' +
   '</div>');
 root.appendChild(cardEl);
-window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
+var nav = window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
 var mapEl = cardEl.querySelector('.ts-proj-map');
 var listEl = cardEl.querySelector('.ts-proj-list');
 var publicEl = cardEl.querySelector('.ts-proj-public');
@@ -828,6 +828,7 @@ function renderPublic() {
 }
 
 function render() {
+  nav.follow(state.projectAttrs[HOME_KEY] || null);
   renderHeader();
   renderPublic();
   renderList();

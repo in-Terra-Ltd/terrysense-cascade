@@ -281,12 +281,7 @@ var cardEl = h(
   '</div>');
 root.innerHTML = '';
 root.appendChild(cardEl);
-function renderNav() {
-  var bar = cardEl.querySelector(':scope > .ts-nav');
-  if (bar) { bar.remove(); }
-  window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
-}
-renderNav();
+var nav = window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
 var mainEl = cardEl.querySelector('.ts-stv-main');
 var refreshBtn = cardEl.querySelector('.ts-foot .ts-btn');
 var chipsEl = cardEl.querySelector('.ts-stv-chips');
@@ -303,6 +298,7 @@ function fail(text) {
 // -- render -----------------------------------------------------------------------------
 
 function render() {
+  nav.follow([state.devices.filter(function (d) { return !d.hidden; }).map(function (d) { return d.id; }).sort(), state.attrs['config.stationDashboard'] || null, hasDryc()]);
   cardEl.querySelector('.ts-subtitle').textContent = state.station.name;
   var st = stationStatus(), chipEl = cardEl.querySelector('.ts-stv-state');
   chipEl.hidden = false;
@@ -406,7 +402,7 @@ function renderChannels() {
       .addEventListener('click', function () {
         templates.openPanel({ station: state.station, attrs: state.attrs, owner: state.owner, names: state.names, kinds: state.kinds,
           calcAttributes: state.calcAttributes, canCreate: state.canCreateDashboards, order: flowOrder(lanes),
-          open: openCharts, changed: function () { renderNav(); return refresh(); } });
+          open: openCharts, changed: refresh });
       });
   }
   if (state.canWrite && opts.devicesDashboardId) {

@@ -7,14 +7,15 @@
  * `opts`, set by the dashboard builders: `links`, a list of
  *   fleet     the Fleet dashboard's landing view
  *   firmware  the Fleet dashboard's firmware view
- *   device    the device view of the bound device
+ *   device    the device view of the bound device; on a bound station,
+ *             *Device:* and the name of each device it contains
  *   relays    the Dry contact interface view of the bound station, when it
  *             keeps DRYC rules or contains a LOGR2 or LOGR4 that has reported
  *             a DRYC reading
  *   projects  the Projects dashboard's landing view; never on a public link
  *   project   *Project:* and the name of the project above the bound
  *             station, or of each project the bound device feeds: its project
- *             dashboard, else its Installation view
+ *             dashboard, else its Installation view; none on a bound project
  *   home      the bound project's own home dashboard, `config.homeDashboard`,
  *             when the user can read it
  *   station   *Station:* and the name of each station the bound device feeds:
@@ -30,6 +31,9 @@
  *             widget is bound to; not for the tenant, never on a public link
  * and `devicesDashboardId`, `projectDashboardId`. A link that does not apply to
  * the bound entity is left out.
+ *
+ * Returns `{follow(key)}`: a view calls it after each load with what its links
+ * depend on, and the row is rebuilt when that changes.
  *
  * Loads after shared/i18n.js, resolver.js, glossary.js, ui.js and tb_io.js.
  */
@@ -47,11 +51,26 @@ var ICON_PROJECT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" s
 /** Puts the navigation row on top of `card`, for the entity the widget is
  * bound to; nothing when `opts.links` is empty. */
 root.TerrySenseNav = function (ctx, tb, ui, card, opts) {
+  var seen;
+  function follow(key) {
+    var next = JSON.stringify(key);
+    if (seen !== undefined && next !== seen) { build(ctx, tb, ui, card, opts); }
+    seen = next;
+  }
+  build(ctx, tb, ui, card, opts);
+  return { follow: follow };
+};
+
+/** A rebuilt row is filled off screen and swapped in whole, so it never flickers empty. */
+function build(ctx, tb, ui, card, opts) {
   opts = opts || {};
   var links = opts.links || [];
   if (!links.length) { return; }
   var h = ui.h, ICON = ui.ICON, t = root.TerrySenseI18n(ctx);
-  var bar = card.insertBefore(h('<nav class="ts-nav"></nav>'), card.firstChild);
+  var old = card.querySelector(':scope > .ts-nav');
+  var bar = h('<nav class="ts-nav"></nav>');
+  var gen = card.tsNavGen = (card.tsNavGen || 0) + 1;
+  if (!old) { card.insertBefore(bar, card.firstChild); }
 
   function button(id, icon, text, onClick) {
     var b = h('<button type="button" class="ts-btn ghost ts-nav-btn">' + icon + '<span></span></button>');
@@ -91,8 +110,18 @@ root.TerrySenseNav = function (ctx, tb, ui, card, opts) {
       });
     },
     device: function (e) {
-      if (e.entityType !== 'DEVICE') { return; }
-      button('device', ICON.gauge, t('nav.deviceOf', 'Device: {name}', { name: e.name }), function () { tb.openDashboard(opts.devicesDashboardId, 'device', e); });
+      var open = function (d) {
+        button('device', ICON.gauge, t('nav.deviceOf', 'Device: {name}', { name: d.name }), function () { tb.openDashboard(opts.devicesDashboardId, 'device', d); });
+      };
+      if (e.entityType === 'DEVICE') { open(e); return; }
+      if (e.kind !== 'Station' || tb.isPublicView()) { return; }
+      return tb.containedDevices(e).then(function (list) {
+        return Promise.all(list.map(function (d) {
+          return tb.get('/api/device/' + d.id).then(function (x) { return { entityType: 'DEVICE', id: d.id, name: x.name }; }).catch(function () { return null; });
+        }));
+      }).then(function (devices) {
+        devices.filter(Boolean).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(open);
+      });
     },
     relays: function (e) {
       if (e.kind !== 'Station') { return; }
@@ -121,8 +150,7 @@ root.TerrySenseNav = function (ctx, tb, ui, card, opts) {
           stations.forEach(function (s) { if (s.project && !seen[s.project.id]) { seen[s.project.id] = true; openProject(s.project); } });
         });
       }
-      if (e.entityType !== 'ASSET') { return; }
-      if (e.kind === 'Project') { openProject(e); return; }
+      if (e.entityType !== 'ASSET' || e.kind === 'Project') { return; }
       return tb.ancestors(e).then(function (chain) {
         var p = chain.filter(function (a) { return a.kind === 'Project'; })[0];
         if (p) { openProject(p); } else { missing('project', t('nav.noProject', 'On no project')); }
@@ -193,7 +221,9 @@ root.TerrySenseNav = function (ctx, tb, ui, card, opts) {
     return links.reduce(function (done, link) {
       return done.then(function () { return LINKS[link](e); });
     }, Promise.resolve());
-  }).catch(function () {});
-};
+  }).catch(function () {}).then(function () {
+    if (old && gen === card.tsNavGen && old.parentNode === card) { card.replaceChild(bar, old); }
+  });
+}
 
 })(typeof self !== 'undefined' ? self : this);

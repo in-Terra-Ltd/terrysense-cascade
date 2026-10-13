@@ -1270,7 +1270,7 @@ var cardEl = h('<div class="ts-card ts-readonly ts-dev"><div class="ts-head"><di
   '<div class="ts-body"><div class="ts-loading">' + esc(t('common.loading', 'Loading…')) + '</div></div>' +
   '<div class="ts-foot"><span class="ts-summary"></span><span class="ts-spacer"></span><button type="button" class="ts-btn">' + ICON.reset + esc(t('common.refresh', 'Refresh')) + '</button></div></div>');
 root.appendChild(cardEl);
-window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
+var nav = window.TerrySenseNav(ctx, tb, ui, cardEl, opts);
 var bodyEl = cardEl.querySelector('.ts-body');
 var summaryEl = cardEl.querySelector('.ts-summary');
 var refreshBtn = cardEl.querySelector('.ts-foot .ts-btn');
@@ -1288,6 +1288,7 @@ function fail(text) {
 
 function render() {
   var d = state.device;
+  nav.follow(state.bindings.map(function (b) { return b.station.id; }));
   cardEl.querySelector('.ts-subtitle').textContent = d.name + (d.label ? ' · ' + d.label : '');
   var chip = cardEl.querySelector('.ts-chip.level');
   chip.hidden = !d.type;
