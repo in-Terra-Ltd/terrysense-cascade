@@ -383,6 +383,7 @@ function emptyLine(what) {
 
 function render() {
   bodyEl.innerHTML = '';
+  renderNotice();
   if (!state.defaultsShared) {
     bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-terra defaults are not shared with this customer, so tenant defaults and the measurement names do not load. A tenant admin shares the “Shared defaults” group.')) + '</span></div>'));
   }
@@ -835,11 +836,15 @@ function openCalculation(p, plan) {
 
 /** Write `write`, delete `remove` on the bound entity, re-resolve every station
  * below; asks first when more than one station is affected. `before`, when
- * given, runs once confirmed and before the write. */
-function commit(write, remove, what, button, before) {
+ * given, runs once confirmed and before the write. `extra.more` adds stations
+ * to resolve; `extra.prepare(stations)` runs before the write, and
+ * `extra.after(stations, prepared)` gives the notice shown once saved. */
+function commit(write, remove, what, button, before, extra) {
   if (button) { button.disabled = true; }
   var devices = state.deviceBranch;
-  return resolver.affectedStations(state.origin, io).then(function (stations) {
+  extra = extra || {};
+  return Promise.all([resolver.affectedStations(state.origin, io), extra.more || []]).then(function (got) {
+    var seen = {}, stations = got[0].concat(got[1]).filter(function (st) { return !seen[st.id] && (seen[st.id] = true); });
     var n = stations.length;
     var p = { what: esc(what), n: n, name: esc(state.origin.name) };
     var ask = n > 1
@@ -848,11 +853,15 @@ function commit(write, remove, what, button, before) {
       : Promise.resolve(true);
     return ask.then(function (ok) {
       if (!ok) { if (button) { button.disabled = false; } return; }
-      return (before ? before() : Promise.resolve())
+      var prepared = null;
+      return (extra.prepare ? extra.prepare(stations).then(function (r) { prepared = r; }, function () {}) : Promise.resolve())
+        .then(function () { return before ? before() : null; })
         .then(function () { return tb.saveAttrs(state.origin, write); })
         .then(function () { return tb.deleteAttrs(state.origin, remove.filter(isOwn)); })
         .then(function () { return tb.resolveStations(stations); })
-        .then(function () {
+        .then(function () { return extra.after ? extra.after(stations, prepared).catch(function () { return null; }) : null; })
+        .then(function (notice) {
+          state.notice = notice;
           ui.closeDrawer();
           ui.toast(n === 0 ? t('common.saved', 'Saved')
             : devices ? (n === 1 ? t('settings.deviceUpdatedOne', '1 device updated') : t('settings.deviceUpdatedMany', '{n} devices updated', { n: n }))
@@ -864,6 +873,97 @@ function commit(write, remove, what, button, before) {
     if (button) { button.disabled = false; }
     failed(err);
   });
+}
+
+// -- thresholds already crossed (ALARMING.md §5, pending alarms) -----------------------
+
+var CONDITION_RE = /^effective\.(.+?)\.alarm\.([a-z]+)\.(thresholdMax|thresholdMin|state)$/;
+
+function asState(v) { var x = String(v); return x === '1' ? 'true' : x === '0' ? 'false' : x; }
+
+/** The bands `value` crosses on channel `key`, as the station chain evaluates
+ * them: per direction, the highest severity crossed. */
+function crossings(attrs, key, value) {
+  var hit = {};
+  Object.keys(attrs).forEach(function (k) {
+    var m = CONDITION_RE.exec(k);
+    if (!m || m[1] !== key || attrs[k] === null || attrs[k] === undefined || G.rank(m[2]) < 0) { return; }
+    var thr = attrs[k], dir = { thresholdMax: 'max', thresholdMin: 'min', state: 'state' }[m[3]];
+    var crossed = dir === 'state' ? asState(value) === asState(thr)
+      : dir === 'max' ? Number(value) >= Number(thr) : Number(value) <= Number(thr);
+    if (crossed && (!hit[dir] || G.rank(m[2]) > G.rank(hit[dir].sev))) { hit[dir] = { dir: dir, sev: m[2], threshold: thr }; }
+  });
+  return Object.keys(hit).map(function (d) { return hit[d]; });
+}
+
+/** The active alarms of each station by type, read before a threshold save:
+ * the re-evaluation the save triggers may already have counted once after it. */
+function activeAlarms(stations) {
+  return Promise.all(stations.map(function (st) {
+    return tb.get('/api/alarm/ASSET/' + st.id, { searchStatus: 'ACTIVE', pageSize: '100', page: '0' }).catch(function () { return null; });
+  })).then(function (pages) {
+    var out = {};
+    stations.forEach(function (st, i) {
+      var byType = out[st.id] = {};
+      ((pages[i] && pages[i].data) || []).forEach(function (a) { byType[a.type] = a; });
+    });
+    return out;
+  });
+}
+
+/** After a threshold save: each station whose latest reading of `ch` is already
+ * past a threshold, raised by the re-evaluation, and when its contacts hear of it.
+ * `before`: the active alarms read before the save. */
+function pendingNotice(ch, stations, before) {
+  if (state.deviceBranch) { return Promise.resolve(null); }
+  var split = resolver.splitChannelKey(ch);
+  function mine(key) { return key === ch || (!split.instance && resolver.splitChannelKey(key).name === ch); }
+  return Promise.all(stations.map(function (st) {
+    return io.fetchAttrs(st).then(function (attrs) {
+      var keys = [];
+      Object.keys(attrs).forEach(function (k) { var m = CONDITION_RE.exec(k); if (m && mine(m[1]) && keys.indexOf(m[1]) < 0) { keys.push(m[1]); } });
+      if (!keys.length) { return []; }
+      return tb.get('/api/plugins/telemetry/ASSET/' + st.id + '/values/timeseries', { keys: keys.join(',') }).catch(function () { return {}; }).then(function (values) {
+        var latest = {}, ts = {}, active = (before || {})[st.id] || {};
+        keys.forEach(function (k) { var p = ((values || {})[k] || [])[0]; if (p) { latest[k] = p.value; ts[k] = Number(p.ts); } });
+        return tb.channelFreshness(attrs, ts, state.names).then(function (fresh) {
+          var out = [];
+          keys.filter(function (k) { return k in latest; }).forEach(function (k) {
+            crossings(attrs, k, latest[k]).forEach(function (c) {
+              var a = active[k + '.' + c.dir], d = (a && a.details) || {};
+              if (a && !d.pending) { return; }
+              var debounce = Number(attrs['effective.' + k + '.alarm.' + c.sev + '.debounce']) || 1;
+              var left = Math.max(debounce - (a ? (Number(d.count) || 0) + 1 : 1), 0);
+              var interval = (fresh.channels[k] || {}).intervalS;
+              var at = left && interval ? ts[k] + left * interval * 1000 : 0;
+              var unit = c.dir === 'state' ? '' : unitOf(k);
+              var p = { station: st.name, n: left, time: at > Date.now() ? ui.when(at) : '',
+                value: (c.dir === 'state' ? stateText(k, latest[k]) : latest[k]) + (unit ? ' ' + unit : ''),
+                threshold: (c.dir === 'state' ? stateText(k, c.threshold) : c.threshold) + (unit ? ' ' + unit : '') };
+              out.push(!left ? t('settings.pendingNow', '{station}: {value} is past the threshold {threshold}. The alarm is raised and its contacts are notified now.', p)
+                : left === 1 ? (p.time ? t('settings.pendingOneAt', '{station}: {value} is past the threshold {threshold}. The alarm is raised; its contacts are notified at the next reading past it, around {time}.', p)
+                  : t('settings.pendingOne', '{station}: {value} is past the threshold {threshold}. The alarm is raised; its contacts are notified at the next reading past it.', p))
+                : p.time ? t('settings.pendingManyAt', '{station}: {value} is past the threshold {threshold}. The alarm is raised; its contacts are notified after {n} more readings past it, around {time}.', p)
+                  : t('settings.pendingMany', '{station}: {value} is past the threshold {threshold}. The alarm is raised; its contacts are notified after {n} more readings past it.', p));
+            });
+          });
+          return out;
+        });
+      });
+    }).catch(function () { return []; });
+  })).then(function (lists) {
+    var lines = [].concat.apply([], lists);
+    return lines.length ? lines : null;
+  });
+}
+
+function renderNotice() {
+  if (!state.notice) { return; }
+  var el = bodyEl.appendChild(h('<div class="ts-banner warn" data-notice="pending">' + ICON.info + '<div class="ts-grow"><b></b><ul></ul></div>' +
+    '<button type="button" class="ts-icon-btn" data-a="dismiss" title="' + esc(t('ui.dismiss', 'Dismiss')) + '">' + ICON.close + '</button></div>'));
+  el.querySelector('b').textContent = t('settings.pendingTitle', 'Already past the threshold you saved');
+  state.notice.forEach(function (line) { el.querySelector('ul').appendChild(h('<li></li>')).textContent = line; });
+  el.querySelector('[data-a=dismiss]').addEventListener('click', function () { state.notice = null; el.remove(); });
 }
 
 function resetScalar(d) {
@@ -1135,7 +1235,7 @@ function numericEditor(ch, dr) {
     if (draft.hysteresis !== '') { write[hystKey] = Number(draft.hysteresis); } else { remove.push(hystKey); }
     if (draft.label) { write[CH + ch + '.label'] = draft.label; } else { remove.push(CH + ch + '.label'); }
     debounceWrites(ch, draft, write, remove);
-    commit(write, remove.filter(function (k) { return !(k in write); }), chLabel(ch), save);
+    commit(write, remove.filter(function (k) { return !(k in write); }), chLabel(ch), save, null, { prepare: activeAlarms, after: function (stations, before) { return pendingNotice(ch, stations, before); } });
   });
   renderList();
 }
@@ -1252,7 +1352,7 @@ function conditionEditor(ch, dr, isBool) {
       if (draft[f]) { write[CH + ch + '.' + f] = draft[f]; } else { remove.push(CH + ch + '.' + f); }
     });
     debounceWrites(ch, draft, write, remove);
-    commit(write, remove.filter(function (k) { return !(k in write); }), chLabel(ch), save);
+    commit(write, remove.filter(function (k) { return !(k in write); }), chLabel(ch), save, null, { prepare: activeAlarms, after: function (stations, before) { return pendingNotice(ch, stations, before); } });
   });
   renderList();
 }

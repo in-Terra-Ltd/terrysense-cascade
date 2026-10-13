@@ -644,6 +644,8 @@ function stationRow(entry) {
   if (entry.service.silencedUntil && !retired) { side.appendChild(ui.stateChip('silenced', entry.service.silencedUntil)); }
   if (!entry.devices.length && !retired) { side.appendChild(ui.stateChip('nodevice')); }
   if (state.canEdit && !retired && linkOn() && onHome(entry) && !isPublic(entry.station.id)) { side.appendChild(ui.stateChip('private')); }
+  var pending = !retired && entry.alarms.map(ui.pendingChip).filter(Boolean)[0];
+  if (pending) { side.appendChild(pending); }
   side.appendChild(chip(entry.status));
   var target = entry.dashboardId || opts.projectDashboardId;
   if (target) {

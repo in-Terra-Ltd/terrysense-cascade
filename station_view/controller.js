@@ -417,6 +417,8 @@ function renderChannels() {
       row.firstChild.style.setProperty('--c', 'var(--sev-' + a.severity.toLowerCase() + ')');
       row.firstChild.textContent = G.severity(a.severity.toLowerCase()).label;
       row.lastChild.textContent = otherAlarmText(a);
+      var pending = ui.pendingChip(a);
+      if (pending) { row.appendChild(pending); }
       if (state.canWrite) { row.appendChild(alarmActions(a)); }
     });
   }
@@ -756,6 +758,7 @@ function valueNode(row, el, c) {
     chipEl.style.setProperty('--c', 'var(--sev-' + c.alarm.toLowerCase() + ')');
     chipEl.textContent = G.severity(c.alarm.toLowerCase()).label;
     el.insertBefore(chipEl, el.firstChild);
+    c.alarms.forEach(function (x) { var p = ui.pendingChip(x); if (p) { el.insertBefore(p, chipEl.nextSibling); } });
     if (state.canWrite) { c.alarms.forEach(function (a) { el.appendChild(alarmActions(a)); }); }
   }
 }

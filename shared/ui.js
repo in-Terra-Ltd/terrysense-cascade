@@ -381,6 +381,20 @@ root.TerrySenseUi = function (rootEl) {
     return el;
   }
 
+  /** The *Pending* chip of an alarm raised but not notified yet (ALARMING.md §2.5), or null. */
+  function pendingChip(alarm) {
+    var d = (alarm && alarm.details) || {};
+    if (!d.pending) { return null; }
+    var p = { count: Number(d.count) || 1, debounce: Number(d.debounce) || 1 };
+    p.n = Math.max(p.debounce - p.count, 1);
+    var el = h('<span class="ts-chip ts-state-chip" data-chip="pending"></span>');
+    el.textContent = root.TerrySenseT('ui.chip.pending', 'Pending {count} of {debounce}', p);
+    el.setAttribute('data-tip', p.n === 1
+      ? root.TerrySenseT('ui.pendingNext', 'Raised, nobody notified yet: {count} of {debounce} readings in a row past the threshold. Its contacts are notified at the next one past it.', p)
+      : root.TerrySenseT('ui.pendingMore', 'Raised, nobody notified yet: {count} of {debounce} readings in a row past the threshold. Its contacts are notified after {n} more past it.', p));
+    return el;
+  }
+
   /**
    * The follow-up card after a structural action: one row per step, each
    * `{a, label, done, action, run()}`, a done one ticked. `onDismiss` hides it.
@@ -466,7 +480,7 @@ root.TerrySenseUi = function (rootEl) {
   }
 
   return {
-    rowMenu: rowMenu, tenantSection: tenantSection, stateChip: stateChip, silenceText: silenceText, when: when,
+    rowMenu: rowMenu, tenantSection: tenantSection, stateChip: stateChip, pendingChip: pendingChip, silenceText: silenceText, when: when,
     followUp: followUp, confirmTyped: confirmTyped, inlineEdit: inlineEdit,
     productImage: productImage, radioLevel: radioLevel, metric: metric,
     ICON: ICON, esc: esc, h: h, info: info, sevDot: sevDot, glossary: glossary,
