@@ -1987,9 +1987,11 @@ tb.boundDatasource().then(function (ds) {
     state.writable = writable;
     render();
     timer = setInterval(refresh, REFRESH_MS);
-    // Opened from a station's *Connect a device*: the connect panel, that station picked.
+    // Opened from a station's *Connect a device*: the connect panel, that station picked;
+    // a station this device already feeds opens its channels instead.
     var connectTo = (ctx.stateController.getStateParams() || {}).connectTo;
-    if (connectTo && writable) { bindDrawer(null, connectTo); }
+    var fed = connectTo && state.bindings.filter(function (b) { return b.station.id === connectTo.id; })[0];
+    if (connectTo && writable) { bindDrawer(fed || null, fed ? null : connectTo); }
   });
 }).catch(function (err) { fail(t('common.loadFailed', 'Could not load: {error}', { error: err && err.message ? err.message : err })); });
 
