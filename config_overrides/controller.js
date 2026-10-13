@@ -266,9 +266,8 @@ function loadBook() {
   });
 }
 
-/** The assets the owner of this level owns: a customer's, or the tenant's own on the Tenant view. */
-function ownedLevels() {
-  var o = state.origin;
+/** The assets `o` owns: a customer's, else the tenant's own. */
+function ownedLevels(o) {
   var list = o.entityType === 'CUSTOMER' ? tb.getAll('/api/customer/' + o.id + '/assets', {})
     : tb.getAll('/api/tenant/assets', {}).then(function (l) { return l.filter(function (a) { return a.ownerId && a.ownerId.entityType === 'TENANT'; }); });
   return list.then(function (assets) {
@@ -281,7 +280,7 @@ function loadBelow() {
   var o = state.origin, badges = o.entityType === 'CUSTOMER' || o.kind === 'Project';
   state.below = null;
   if (!badges && !state.book.section) { return Promise.resolve(); }
-  return (o.kind === 'Project' ? resolver.descendantAssets(o, io) : ownedLevels()).then(function (levels) {
+  return (o.kind === 'Project' ? resolver.descendantAssets(o, io) : ownedLevels(o)).then(function (levels) {
     return Promise.all(levels.map(function (l) { return io.fetchAttrs(l).then(function (a) { return { level: l, attrs: a || {} }; }); }));
   }).then(function (below) {
     if (badges) { state.below = below; }
@@ -538,6 +537,20 @@ function openLower(anchor, label, list) {
     box.appendChild(reset);
   }
   pop = ui.popover(anchor, box);
+}
+
+/** The stations whose lists name one of the book entries `ids`, wherever in the owner's levels. */
+function stationsNaming(ids) {
+  var hd = state.book.holder;
+  if (!ids.length || !hd) { return Promise.resolve([]); }
+  return ownedLevels(hd).then(function (levels) {
+    if (hd.entityType === 'CUSTOMER') { levels = [hd].concat(levels); }
+    return Promise.all(levels.map(function (l) { return io.fetchAttrs(l).then(function (a) { return { level: l, attrs: a || {} }; }); }));
+  }).then(function (holders) {
+    var usage = bookUsage(holders), levels = [];
+    ids.forEach(function (id) { (usage[id] || []).forEach(function (u) { levels.push(u.level); }); });
+    return uniqueStations(levels);
+  });
 }
 
 function uniqueStations(levels) {
@@ -849,7 +862,9 @@ function commit(write, remove, what, button, before, extra) {
     var p = { what: esc(what), n: n, name: esc(state.origin.name) };
     var ask = n > 1
       ? (devices ? ui.confirm(t('settings.changesDevices', 'This changes <b>{what}</b> for <b>{n} devices</b> under {name}.', p), t('settings.applyDevices', 'Apply to {n} devices', p))
-        : ui.confirm(t('settings.changesStations', 'This changes <b>{what}</b> for <b>{n} stations</b> under {name}.', p), t('settings.applyStations', 'Apply to {n} stations', p)))
+        : ui.confirm(n > got[0].length
+          ? t('settings.changesStationsContacts', 'This changes <b>{what}</b> for <b>{n} stations</b>: those under {name}, and those whose lists name a contact you edited.', p)
+          : t('settings.changesStations', 'This changes <b>{what}</b> for <b>{n} stations</b> under {name}.', p), t('settings.applyStations', 'Apply to {n} stations', p)))
       : Promise.resolve(true);
     return ask.then(function (ok) {
       if (!ok) { if (button) { button.disabled = false; } return; }
@@ -1386,13 +1401,25 @@ function openScalar(section, fromAdd) {
     save.addEventListener('click', function () {
       var write = {}, remove = [];
       defs.forEach(function (d) { if (d.key in draft) { write[d.key] = draft[d.key]; } else { remove.push(d.key); } });
-      commit(write, remove, sec[2], save, newEntries(write));
+      var edited = editedEntries(write);
+      commit(write, remove, sec[2], save, newEntries(write), { more: stationsNaming(edited) });
     });
   });
 }
 
-/** The book write for the entries *New contact* added to `write`'s lists: in
- * `write` itself on a customer, else a step before it. */
+/** The known entries edited in `write`'s lists: their change reaches every list that names them. */
+function editedEntries(write) {
+  var out = [];
+  LIST_KEYS.forEach(function (k) {
+    (write[k] || []).forEach(function (c) {
+      if (c.type === 'book' && pendingBook[c.entryId] && state.book.entries[c.entryId] && out.indexOf(c.entryId) < 0) { out.push(c.entryId); }
+    });
+  });
+  return out;
+}
+
+/** The book write for the entries *New contact* added or *Edit* changed in
+ * `write`'s lists: in `write` itself on a customer, else a step before it. */
 function newEntries(write) {
   var used = {};
   LIST_KEYS.forEach(function (k) {
@@ -1558,7 +1585,7 @@ function contactsEditor(initial, set, setValid) {
   }
 
   /** A platform user or a book entry: name and addresses from their source, the channels to use. */
-  function personCard(c, person, kind, missing) {
+  function personCard(c, person, kind, missing, onEdit) {
     var el = h('<div class="ts-contact"><div class="ts-contact-user"><span class="ts-avatar"></span><div class="ts-grow"><div class="ts-row-label"></div>' +
       '<div class="ts-row-meta"></div></div><span class="ts-chip"></span></div><div class="ts-contact-via"></div></div>');
     el.querySelector('.ts-chip').textContent = kind;
@@ -1572,6 +1599,10 @@ function contactsEditor(initial, set, setValid) {
     el.querySelector('.ts-row-label').textContent = person.name;
     el.querySelector('.ts-row-meta').textContent = [person.email, person.phone].filter(Boolean).join(' · ') +
       (person.phone && !E164.test(person.phone) ? t('settings.phoneNotE164', ' — phone not in international format, SMS will fail') : '');
+    if (onEdit) {
+      el.querySelector('.ts-contact-user').insertBefore(h('<button type="button" class="ts-btn ghost" data-a="edit-entry">' + ICON.edit + esc(t('common.edit', 'Edit')) + '</button>'),
+        el.querySelector('.ts-chip')).addEventListener('click', onEdit);
+    }
     var via = el.querySelector('.ts-contact-via');
     [['viaSms', t('glossary.setting.smsEnabled', 'SMS'), !!person.phone], ['viaEmail', t('glossary.setting.emailEnabled', 'E-mail'), !!person.email]].forEach(function (x) {
       var tip = !x[2] && x[0] === 'viaSms' && c.type === 'user' ? ' data-tip="noPhone"' : '';
@@ -1597,14 +1628,18 @@ function contactsEditor(initial, set, setValid) {
         el = personCard(c, u && { name: userName(u), email: u.email, phone: u.phone }, t('settings.platformUser', 'Platform user'), t('settings.unknownUser', 'Unknown user'));
       } else if (!e) {
         var b = state.book.entries[c.entryId];
-        el = personCard(c, b && { name: entryName(b), email: b.email, phone: b.sms }, t('settings.externalContact', 'External contact'), t('settings.unknownEntry', 'Unknown entry'));
+        el = personCard(c, b && { name: entryName(b), email: b.email, phone: b.sms }, t('settings.externalContact', 'External contact'), t('settings.unknownEntry', 'Unknown entry'),
+          b && function () { pendingBook[c.entryId] = { name: b.name || '', sms: b.sms || '', email: b.email || '' }; render(); });
       } else {
+        var known = c.type === 'book' && !!state.book.entries[c.entryId];
         el = h('<div class="ts-contact"></div>');
         el.appendChild(entryFields(e, function () {
-          if (c.type === 'book') { c.viaSms = !!e.sms; c.viaEmail = !!e.email; }
+          if (known) { c.viaSms = !!c.viaSms && !!e.sms; c.viaEmail = !!c.viaEmail && !!e.email; } else if (c.type === 'book') { c.viaSms = !!e.sms; c.viaEmail = !!e.email; }
           commitPeople();
         }));
-        if (c.type === 'book') { el.appendChild(h('<div class="ts-field-hint">' + esc(t('settings.newExternal', 'New external contact')) + '</div>')); }
+        if (c.type === 'book') {
+          el.appendChild(h('<div class="ts-field-hint">' + esc(known ? t('settings.editContactHint', 'Changes this contact in every list that names it.') : t('settings.newExternal', 'New external contact')) + '</div>'));
+        }
       }
       el.appendChild(head);
       el.appendChild(sevToggles(c));
