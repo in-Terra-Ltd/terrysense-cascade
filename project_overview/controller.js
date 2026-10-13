@@ -596,9 +596,19 @@ function lastReading(entry) {
   return stale ? text + ' · ' + stale : text;
 }
 
+/** The step a station made public still waits for before a link shows it, or null. */
+function waitingStep(entry) {
+  if (!isPublic(entry.station.id) || entry.service.retired) { return null; }
+  if (!linkOn()) { return t('overview.waitingLinkOff', 'Public, but the project has no public link yet: no link shows it until Public link on in the project’s menu.'); }
+  if (!onHome(entry)) { return t('overview.waitingNotOnHome', 'Public, but the project dashboard does not show it: no link shows it until Add to project dashboard… in its menu.'); }
+  return null;
+}
+
 /** Public access of one station for the project dashboard's public link: null
- * before the check, else `{open, why}` (FRONTEND.md *Public links*). */
+ * before the check, else `{open, why, waiting}` (FRONTEND.md *Public links*). */
 function publicState(entry) {
+  var step = waitingStep(entry);
+  if (step) { return { open: true, why: step, waiting: true }; }
   var r = state.publicReport;
   if (!r) { return null; }
   if (!r.token) { return { open: false, why: r.reason }; }
@@ -630,6 +640,7 @@ function stationRow(entry) {
   var side = el.querySelector('.ts-proj-st-side');
   var pub = state.canEdit && publicState(entry);
   if (pub) { side.appendChild(publicIcon(pub)); }
+  if (pub && pub.waiting) { side.appendChild(ui.stateChip('waiting')).setAttribute('data-tip', pub.why); }
   if (entry.service.silencedUntil && !retired) { side.appendChild(ui.stateChip('silenced', entry.service.silencedUntil)); }
   if (!entry.devices.length && !retired) { side.appendChild(ui.stateChip('nodevice')); }
   if (state.canEdit && !retired && linkOn() && onHome(entry) && !isPublic(entry.station.id)) { side.appendChild(ui.stateChip('private')); }
@@ -677,7 +688,7 @@ function stationRow(entry) {
   if (state.canEdit) {
     var items = life.stationItems({
       station: entry.station, attrs: entry.attrs, project: state.entity, owner: state.owner, isPublic: isPublic(entry.station.id),
-      projectPublic: linkOn(),
+      projectPublic: linkOn(), onHome: state.home ? onHome(entry) : undefined,
       nameEl: el.querySelector('.ts-proj-st-name'), changed: refreshAll, deleted: refreshAll
     });
     if (state.home && !onHome(entry) && !retired && state.canCreateDashboards) {

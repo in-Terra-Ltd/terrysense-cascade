@@ -91,11 +91,13 @@ root.TerrySenseLifecycle = function (ui, tb) {
   }
 
   /** *Public* / *Private* (CA-12): in or out of the owner's public group.
-   * `projectPublic` false: the project has no public link, so nothing shows the station yet. */
-  function setPublic(entity, owner, on, done, projectPublic) {
+   * `projectPublic` false: the project has no public link, so nothing shows the station yet;
+   * `onHome` false: the project dashboard does not show it. */
+  function setPublic(entity, owner, on, done, projectPublic, onHome) {
     var name = { name: esc(entity.name) };
     var text = !on ? t('lifecycle.public.confirmPrivate', 'Make <b>{name}</b> private? The public link no longer shows it.', name)
       : projectPublic === false ? t('lifecycle.public.confirmNoLink', 'Make <b>{name}</b> public? Its project has no public link yet, so no link shows it until <i>Public link on</i> in the project’s menu.', name)
+      : onHome === false ? t('lifecycle.public.confirmNotOnHome', 'Make <b>{name}</b> public? The project dashboard does not show it, so no link shows it until <i>Add to project dashboard…</i> in its menu.', name)
       : t('lifecycle.public.confirmPublic', 'Make <b>{name}</b> public? The project’s public link then shows it and its readings, where the project dashboard does.', name);
     ui.confirm(text, on ? t('lifecycle.public.makePublic', 'Make public') : t('lifecycle.public.makePrivate', 'Make private'))
       .then(function (ok) {
@@ -183,14 +185,14 @@ root.TerrySenseLifecycle = function (ui, tb) {
   }
 
   /** The row menu items of a station (FRONTEND.md *Projects dashboard*, row menu).
-   * `s`: {station, attrs, project, owner, isPublic, projectPublic, nameEl, changed(), deleted()}. */
+   * `s`: {station, attrs, project, owner, isPublic, projectPublic, onHome, nameEl, changed(), deleted()}. */
   function stationItems(s) {
     var retired = tb.serviceOf(s.attrs).retired;
     return [
       { a: 'rename', label: t('common.rename', 'Rename'), run: function () { rename(s.station, s.nameEl, s.changed); } },
       s.project && { a: 'move', label: t('lifecycle.move.title', 'Move to project…'), run: function () { moveStation(s.station, s.attrs, s.project, s.owner, s.changed); } },
       { a: s.isPublic ? 'private' : 'public', label: s.isPublic ? t('lifecycle.public.makePrivate', 'Make private') : t('lifecycle.public.makePublic', 'Make public'),
-        run: function () { setPublic(s.station, s.owner, !s.isPublic, s.changed, s.projectPublic); } },
+        run: function () { setPublic(s.station, s.owner, !s.isPublic, s.changed, s.projectPublic, s.onHome); } },
       retired ? { a: 'reactivate', label: t('lifecycle.reactivate.ok', 'Reactivate'), run: function () { reactivate(s.station, s.changed); } }
         : { a: 'retire', label: t('lifecycle.retire.ok', 'Retire'), run: function () { retire(s.station, s.changed); } },
       retired && { a: 'delete', label: t('lifecycle.menu.delete', 'Delete…'), danger: true, run: function () { remove(s.station, [], s.deleted); } }
