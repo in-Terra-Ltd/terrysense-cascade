@@ -391,8 +391,9 @@ function commandsSection() {
   if (state.writable) {
     var bar = h('<div class="ts-cmdbar"><button type="button" class="ts-btn" data-a="reports">' + esc(t('device.requestReports', 'Request reports')) + '</button>' +
       '<button type="button" class="ts-btn" data-a="diag">' + esc(t('device.selfDiag', 'Self-diagnostic')) + '</button></div>');
+    if (family() === 'bus') { bar.appendChild(uplinkControl(Number(state.client['status.baseIntervalSeconds']) || 0)); }
     bar.addEventListener('click', function (e) {
-      var a = e.target.closest('[data-a]');
+      var a = e.target.closest('[data-a=reports], [data-a=diag]');
       if (!a) { return; }
       send([a.dataset.a === 'reports'
         ? { op: 'REQUEST_REPORT', target: { mode: 'GLOBAL' }, reports: ['topology', 'subscriptions', 'status', 'device_info'] }
@@ -1724,7 +1725,6 @@ function statusSection() {
           (intervals.length ? t('device.subsEvery', ', every {d}', { d: fmtDuration(lo) }) + (hi !== lo ? t('device.subsTo', ' to {d}', { d: fmtDuration(hi) }) : '') : '')
         : t('device.noSubscription', 'No subscription reported')
     ]);
-    if (state.writable) { grid.lastChild.appendChild(uplinkControl(Number(c['status.baseIntervalSeconds']) || 0)); }
   }
   var net = [];
   var sf = state.server.spreadingFactor !== undefined ? state.server.spreadingFactor : c.spreadingFactor;
@@ -1790,9 +1790,10 @@ function statusSection() {
   return grid.childNodes.length ? sec : null;
 }
 
-/** The base uplink interval with its unit and *Set*: `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). */
+/** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
+ * `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). */
 function uplinkControl(current) {
-  var el = h('<div class="ts-stat-line ts-uplink-set"><span class="ts-tsrc-every">' + esc(t('device.uplinkInterval', 'Uplink interval')) +
+  var el = h('<div class="ts-uplink-set"><span class="ts-tsrc-every">' + esc(t('device.uplinkInterval', 'Uplink interval')) +
     ' <input class="ts-input num sm" type="number" min="1" step="1"><select class="ts-select sm"></select>' +
     '<button type="button" class="ts-btn primary sm" data-a="uplink-interval" hidden>' + esc(t('device.set', 'Set')) + '</button></span></div>');
   var input = el.querySelector('input'), unit = el.querySelector('select'), setBtn = el.querySelector('button');
