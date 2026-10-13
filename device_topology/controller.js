@@ -276,7 +276,8 @@ function targetText(tg) {
 function commandText(c) {
   var target = targetText(c.target);
   var what = {
-    SET_INTERVAL: t('device.cmdInterval', 'Interval{target} → {s} s', { target: target, s: c.interval_s }),
+    SET_INTERVAL: (c.target || {}).mode === 'GLOBAL' ? t('device.cmdUplinkInterval', 'Uplink interval → {s} s', { s: c.interval_s })
+      : t('device.cmdInterval', 'Interval{target} → {s} s', { target: target, s: c.interval_s }),
     SET_ENABLED: c.enabled ? t('device.cmdEnable', 'Enable{target}', { target: target }) : t('device.cmdDisable', 'Disable{target}', { target: target }),
     SELF_DIAG: t('device.selfDiag', 'Self-diagnostic'),
     REQUEST_REPORT: t('device.requestReports', 'Request reports') + (c.reports ? ': ' + c.reports.join(', ') : ''),
@@ -315,10 +316,11 @@ function request(body, toast) {
   });
 }
 
-function send(commands) {
+/** `note`, when given, follows the list of commands. */
+function send(commands, note) {
   var queued = pending();
   var n = queued ? queued.commands.length : 0;
-  return ui.confirm(t('device.sendTo', 'Send to {device}?', { device: deviceName() }) + listOf(commands) +
+  return ui.confirm(t('device.sendTo', 'Send to {device}?', { device: deviceName() }) + listOf(commands) + (note ? note + ' ' : '') +
     (n === 1 ? t('device.queueJoinOne', 'It joins the 1 queued change; the whole set goes out after the device’s next uplink.')
        : n ? t('device.queueJoinMany', 'It joins the {n} queued changes; the whole set goes out after the device’s next uplink.', { n: n })
        : t('device.deliveredNext', 'It is delivered after the device’s next uplink.')), t('common.send', 'Send')).then(function (ok) {
@@ -1714,13 +1716,16 @@ function statusSection() {
   var subs = srcs.filter(function (x) { return x.enabled === true || x.enabled === 'true'; });
   var intervals = subs.map(function (x) { return Number(x.interval); }).filter(function (n) { return n > 0; });
   var lo = intervals.length ? Math.min.apply(null, intervals) : 0, hi = intervals.length ? Math.max.apply(null, intervals) : 0;
-  if (bus) { card('Reporting', t('device.statReporting', 'Reporting'), DEVICE, [
-    hasStatus ? t('device.uplinkEvery', 'Uplink every {d}', { d: fmtDuration(c['status.baseIntervalSeconds']) }) : t('device.uplinkUnknown', 'Uplink interval not reported'),
-    subs.length
-      ? (subs.length === 1 ? t('device.subscriptionOne', '1 subscription') : t('device.subscriptionMany', '{n} subscriptions', { n: subs.length })) +
-        (intervals.length ? t('device.subsEvery', ', every {d}', { d: fmtDuration(lo) }) + (hi !== lo ? t('device.subsTo', ' to {d}', { d: fmtDuration(hi) }) : '') : '')
-      : t('device.noSubscription', 'No subscription reported')
-  ]); }
+  if (bus) {
+    card('Reporting', t('device.statReporting', 'Reporting'), DEVICE, [
+      hasStatus ? t('device.uplinkEvery', 'Uplink every {d}', { d: fmtDuration(c['status.baseIntervalSeconds']) }) : t('device.uplinkUnknown', 'Uplink interval not reported'),
+      subs.length
+        ? (subs.length === 1 ? t('device.subscriptionOne', '1 subscription') : t('device.subscriptionMany', '{n} subscriptions', { n: subs.length })) +
+          (intervals.length ? t('device.subsEvery', ', every {d}', { d: fmtDuration(lo) }) + (hi !== lo ? t('device.subsTo', ' to {d}', { d: fmtDuration(hi) }) : '') : '')
+        : t('device.noSubscription', 'No subscription reported')
+    ]);
+    if (state.writable) { grid.lastChild.appendChild(uplinkControl(Number(c['status.baseIntervalSeconds']) || 0)); }
+  }
   var net = [];
   var sf = state.server.spreadingFactor !== undefined ? state.server.spreadingFactor : c.spreadingFactor;
   var link = [];
@@ -1783,6 +1788,41 @@ function statusSection() {
       : t('device.noStatus', 'No STATUS report from this LOGR yet: charge, power, SD card and downlink radio appear after its next one.');
   }
   return grid.childNodes.length ? sec : null;
+}
+
+/** The base uplink interval with its unit and *Set*: `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). */
+function uplinkControl(current) {
+  var el = h('<div class="ts-stat-line ts-uplink-set"><span class="ts-tsrc-every">' + esc(t('device.uplinkInterval', 'Uplink interval')) +
+    ' <input class="ts-input num sm" type="number" min="1" step="1"><select class="ts-select sm"></select>' +
+    '<button type="button" class="ts-btn primary sm" data-a="uplink-interval" hidden>' + esc(t('device.set', 'Set')) + '</button></span></div>');
+  var input = el.querySelector('input'), unit = el.querySelector('select'), setBtn = el.querySelector('button');
+  UNITS.forEach(function (u) { var o = document.createElement('option'); o.value = u.s; o.textContent = u.label; unit.appendChild(o); });
+  if (current) {
+    var u = unitFor(current);
+    unit.value = u.s;
+    input.value = current / u.s;
+  } else {
+    unit.value = 60;
+    input.placeholder = '?';
+  }
+  var queued = ((pending() || {}).commands || []).filter(function (x) { return x.op === 'SET_INTERVAL' && (x.target || {}).mode === 'GLOBAL'; });
+  if (queued.length) {
+    var chip = el.appendChild(h('<span class="ts-chip warn" data-queued="1"></span>'));
+    chip.textContent = t('device.changeQueued', 'change queued');
+    chip.title = t('device.afterNextUplink', '{commands}, after the next uplink', { commands: queued.map(commandText).join(' · ') });
+  }
+  function seconds() { return Number(input.value) * Number(unit.value); }
+  function changed() { setBtn.hidden = !input.value || seconds() === current; }
+  input.addEventListener('input', changed);
+  unit.addEventListener('change', changed);
+  setBtn.addEventListener('click', function () {
+    var v = seconds();
+    if (!(v >= 1 && v <= 65535 && Math.floor(v) === v)) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
+    send([{ op: 'SET_INTERVAL', target: { mode: 'GLOBAL' }, interval_s: v }],
+      v < current ? t('device.uplinkShorter', 'A shorter uplink interval costs battery: the LOGR powers its bus and radio more often.')
+        : t('device.uplinkNote', 'Every uplink powers the LOGR\u2019s bus and radio: the shorter the interval, the more battery it costs.'));
+  });
+  return el;
 }
 
 /** Items, each a string, a node or a list of both, flattened with `sep` between them. */
