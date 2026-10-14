@@ -323,7 +323,7 @@ function renderHead() {
 /** The source keys a device reports — for a DeviceDefaults asset, those of a
  * few devices of its profile. Provenance and fault keys carry no limit. */
 function sourceKeysOf(origin) {
-  var skip = /^(uplinkCause|uplinkLatest|rssi|snr|service\.silencedNotice)$|\.status$/;
+  var skip = /^(uplinkTriggered|uplinkCause|uplinkLatest|rssi|snr|service\.silencedNotice)$|\.status$/;
   var devices = origin.entityType === 'DEVICE' ? Promise.resolve([origin])
     : (io.fetchProfileDevices ? io.fetchProfileDevices(origin.name) : Promise.resolve([])).then(function (l) { return l.slice(0, 8); });
   return devices.then(function (list) {

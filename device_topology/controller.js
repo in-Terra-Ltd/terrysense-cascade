@@ -16,8 +16,9 @@
  * measurement a list item. The layout depends on the family:
  *   bus    LOGR3, LOGR4: positions from `topology.p<POS>.*`, position 0 from
  *          the LOGR's own catalog entry; sources from `subscriptions.*` and
- *          the stored telemetry keys, each with its interval and whether it
- *          is enabled, or *not subscribed*; configurable by command. A DRYC
+ *          the stored telemetry keys, each with its interval, its reporting
+ *          rule and whether it is enabled, or *not subscribed*; configurable
+ *          by command, the rule's triggers limited to its kind's. A DRYC
  *          adds the readings unpacked from its status and its rules state.
  *   logr2  the LOGR and its one or two sensors, fixed in its firmware:
  *          readings grouped by their peripheral prefix; the data of a sensor
@@ -287,10 +288,27 @@ function commandText(c) {
     REQUEST_REPORT: t('device.requestReports', 'Request reports') + (c.reports ? ': ' + c.reports.join(', ') : ''),
     CREATE_SUBSCRIPTION: t('device.cmdSubscribe', 'Subscribe{target} every {s} s', { target: target, s: c.interval_s }),
     DELETE_SUBSCRIPTION: t('device.cmdUnsubscribe', 'Remove subscription{target}', { target: target }),
-    PERIPHERAL_OP: t('device.cmdPeripheralOp', 'Peripheral operation{target}', { target: target })
+    PERIPHERAL_OP: t('device.cmdPeripheralOp', 'Peripheral operation{target}', { target: target }),
+    SET_TRIGGER: c.trigger === 'none' ? t('device.cmdTriggerNone', 'Report{target} on its schedule only', { target: target })
+      : t('device.cmdTrigger', 'Report{target} at once {rule}', { target: target, rule: ruleText(c.trigger, c.min_interval_s, c.level, unitOfTarget(c.target)) })
   }[c.op];
   return what || String(c.op);
 }
+
+/** A reporting rule in words (reporting_rules.md): `when it turns on, at most every 15 min`. */
+function ruleText(trigger, minInterval, level, unit) {
+  var lv = fmtValue(level) + (unit ? ' ' + unit : '');
+  var what = {
+    rise: t('device.ruleRise', 'when it turns on'),
+    fall: t('device.ruleFall', 'when it turns off'),
+    change: t('device.ruleChange', 'when it changes'),
+    above: t('device.ruleAbove', 'when it rises above {level}', { level: lv }),
+    below: t('device.ruleBelow', 'when it falls below {level}', { level: lv })
+  }[trigger] || String(trigger);
+  return Number(minInterval) > 0 ? t('device.ruleAtMost', '{rule}, at most every {d}', { rule: what, d: fmtDuration(minInterval) }) : what;
+}
+
+function unitOfTarget(tg) { return tg && tg.kind ? unitOf({ kind: tg.kind }) : ''; }
 
 function resultText(r) {
   if (r.status !== 'OK') { return r.opcode + ': ' + (G.COMMAND_STATUS[r.status] || r.status); }
@@ -834,7 +852,7 @@ function deleteSensorData(part) {
 
 // -- replace device (DEVICE_VIEW.md §2, CA-13) -------------------------------------------------
 
-var PROVENANCE_KEY = /^(uplinkCause|uplinkLatest|rssi|snr)$|\.status$/;
+var PROVENANCE_KEY = /^(uplinkTriggered|uplinkCause|uplinkLatest|rssi|snr)$|\.status$/;
 
 /** The stations whose channels this device feeds and the user may write. */
 function replaceable() {
@@ -1747,7 +1765,7 @@ function sourceRow(s, node, diagnostic) {
   if (state.faults[s.sourceKey]) {
     row.querySelector('.ts-mc-state').appendChild(h('<span class="ts-chip fault" data-alarm="1">' + ICON.bell + '</span>')).title = t('device.faultAlarmTip', 'Active peripheralFault alarm');
   }
-  everyCell(row.querySelector('.ts-mc-every'), s, row);
+  everyCell(row.querySelector('.ts-mc-every'), s, row, node);
   var attention = st.state === 'fault' || st.state === 'waiting' || !!state.faults[s.sourceKey], unstored = false;
   if (s.kind === 'drycStatus') { attention = drycCells(row, 'p' + s.position + '.', s.position) || attention; }
   else { unstored = storeCell(row, s.sourceKey, diagnostic); }
@@ -2017,8 +2035,8 @@ function queuedFor(s) {
 
 /** Read: the interval and whether the subscription is on, as the device last reported, and a queued change.
  * In the edit mode: the switch, the interval and remove, or subscribe, each joining the draft. */
-function everyCell(cell, s, row) {
-  if (state.writable && state.editing) { editCell(cell, s, row); return; }
+function everyCell(cell, s, row, node) {
+  if (state.writable && state.editing) { editCell(cell, s, row, node); return; }
   if (!subscribed(s)) {
     cell.appendChild(h('<span class="ts-chip" data-subscribed="false"></span>')).textContent = t('device.notSubscribed', 'not subscribed');
   } else {
@@ -2027,6 +2045,11 @@ function everyCell(cell, s, row) {
     if (s.enabled !== undefined) { every.dataset.enabled = String(on); }
     if (s.interval) { every.dataset.interval = s.interval; }
     every.textContent = !on ? t('common.valueOff', 'off') : s.interval ? fmtDuration(s.interval) : '—';
+    if (s.trigger && s.trigger !== 'none') {
+      var rule = cell.appendChild(h('<div class="ts-mrule"></div>'));
+      rule.dataset.trigger = s.trigger;
+      rule.textContent = t('device.reportsAtOnce', 'reports at once {rule}', { rule: ruleText(s.trigger, s.minInterval, s.level, unitOf(s)) });
+    }
   }
   var queued = queuedFor(s);
   if (queued.length) {
@@ -2051,7 +2074,7 @@ function intervalInputs(seconds) {
   return { el: box, seconds: function () { return input.value === '' ? null : Number(input.value) * Number(unit.value); } };
 }
 
-function editCell(cell, s, row) {
+function editCell(cell, s, row, node) {
   var d = state.draft[s.sourceKey] || {};
   var current = Number(s.interval) || 0;
   if (!subscribed(s)) {
@@ -2081,6 +2104,8 @@ function editCell(cell, s, row) {
   cell.appendChild(ivs.el);
   var remove = cell.appendChild(h('<button type="button" class="ts-icon-btn" data-a="remove">' + ICON.close + '</button>'));
   remove.title = t('device.removeSubscription', 'Remove this subscription');
+  var rule = triggersOf(s).length ? ruleEditor(s, node, d.rule) : null;
+  if (rule) { cell.appendChild(rule.el); }
   function update() {
     var next = {};
     if (remove.classList.contains('on')) { next.remove = true; }
@@ -2088,6 +2113,8 @@ function editCell(cell, s, row) {
       if (check.checked !== on) { next.enabled = check.checked; }
       var sec = ivs.seconds();
       if (sec !== null && sec !== current) { next.interval = sec; }
+      var r = rule && rule.changed();
+      if (r) { next.rule = r; }
     }
     if (Object.keys(next).length) { state.draft[s.sourceKey] = next; } else { delete state.draft[s.sourceKey]; }
     draftChanged(row, s);
@@ -2097,7 +2124,98 @@ function editCell(cell, s, row) {
   ivs.el.addEventListener('input', update);
   ivs.el.addEventListener('change', update);
   remove.addEventListener('click', function () { remove.classList.toggle('on'); update(); });
+  if (rule) { rule.onChange(update); }
   draftChanged(row, s, true);
+}
+
+/** The triggers a rule on this source may use: its kind's, from the catalog defaults. Empty for a
+ * device that reports no rule (firmware before wire v3 answers SET_TRIGGER with ERR_UNKNOWN_OP). */
+function triggersOf(s) {
+  if (s.trigger === undefined) { return []; }
+  return ((resolver.kindSpec(s.kind, state.kinds) || {}).triggers) || [];
+}
+
+var LEVEL_TRIGGERS = ['above', 'below'];
+
+/** The reporting rule beside the interval: a trigger from the kind's, a level and re-arm margin for
+ * above / below, and the minimum gap between two prompt uplinks; a change joins the draft as SET_TRIGGER. */
+function ruleEditor(s, node, drafted) {
+  var el = h('<div class="ts-mrule ts-src-rule"><span class="ts-row-meta"></span><select class="ts-select sm ts-src-trig"></select>' +
+    '<span class="ts-src-level" hidden><input class="ts-input num sm ts-src-lvl" type="number" step="any">' +
+    ' <span class="ts-row-meta ts-src-rearm"></span> <input class="ts-input num sm ts-src-hys" type="number" min="0" step="any"><span class="ts-src-unit-l"></span></span>' +
+    '<span class="ts-src-gap"><span class="ts-row-meta"></span> <input class="ts-input num sm ts-src-min" type="number" min="0" max="65535" step="1"> s</span></div>');
+  el.firstChild.textContent = t('device.reportAtOnce', 'Report at once');
+  el.querySelector('.ts-src-rearm').textContent = t('device.rearmBy', 're-arm by');
+  el.querySelector('.ts-src-unit-l').textContent = unitOf(s) ? ' ' + unitOf(s) : '';
+  el.querySelector('.ts-src-gap .ts-row-meta').textContent = t('device.atMostEvery', 'at most every');
+  var sel = el.querySelector('.ts-src-trig'), lvl = el.querySelector('.ts-src-lvl'), hys = el.querySelector('.ts-src-hys');
+  var gap = el.querySelector('.ts-src-min'), levelEl = el.querySelector('.ts-src-level'), gapEl = el.querySelector('.ts-src-gap');
+  var label = {
+    none: t('device.triggerNone', 'never, on its schedule only'),
+    rise: t('device.ruleRise', 'when it turns on'),
+    fall: t('device.ruleFall', 'when it turns off'),
+    change: t('device.ruleChange', 'when it changes'),
+    above: t('device.triggerAbove', 'when it rises above'),
+    below: t('device.triggerBelow', 'when it falls below')
+  };
+  ['none'].concat(triggersOf(s)).forEach(function (tr) {
+    var o = document.createElement('option'); o.value = tr; o.textContent = label[tr] || tr; sel.appendChild(o);
+  });
+  var current = { trigger: s.trigger, minInterval: Number(s.minInterval) || 0, level: s.level, hysteresis: s.hysteresis };
+  if (triggersOf(s).indexOf(current.trigger) < 0) { current.trigger = 'none'; }
+  el.dataset.trigger = current.trigger;
+  // A new rule starts from the catalog default of the measure, when it has one.
+  var dflt = ((measureOf(s, node) || {}).defaultRule) || {};
+  function fill() {
+    var tr = sel.value;
+    var from = tr === current.trigger ? current
+      : dflt.trigger === tr ? { minInterval: dflt.minInterval_s, level: dflt.level, hysteresis: dflt.hysteresis } : {};
+    gap.value = from.minInterval !== undefined ? from.minInterval : 0;
+    lvl.value = from.level !== undefined && from.level !== null ? from.level : '';
+    hys.value = from.hysteresis !== undefined && from.hysteresis !== null ? from.hysteresis : 0;
+  }
+  function show() {
+    levelEl.hidden = LEVEL_TRIGGERS.indexOf(sel.value) < 0;
+    gapEl.hidden = sel.value === 'none';
+  }
+  sel.value = drafted ? drafted.trigger : current.trigger;
+  fill();
+  if (drafted) {
+    if (drafted.min_interval_s !== undefined) { gap.value = drafted.min_interval_s; }
+    if (drafted.level !== undefined) { lvl.value = drafted.level; }
+    if (drafted.hysteresis !== undefined) { hys.value = drafted.hysteresis; }
+  }
+  show();
+  return {
+    el: el,
+    /** The SET_TRIGGER fields when they differ from the device's rule, else null; checked when the draft is sent. */
+    changed: function () {
+      var tr = sel.value;
+      var same = tr === current.trigger && (tr === 'none' || (Number(gap.value) === current.minInterval &&
+        (LEVEL_TRIGGERS.indexOf(tr) < 0 || (Number(lvl.value) === Number(current.level) && Number(hys.value) === Number(current.hysteresis)))));
+      if (same) { return null; }
+      var r = { trigger: tr };
+      if (tr !== 'none') { r.min_interval_s = gap.value === '' ? NaN : Number(gap.value); }
+      if (LEVEL_TRIGGERS.indexOf(tr) >= 0) { r.level = lvl.value === '' ? NaN : Number(lvl.value); r.hysteresis = Number(hys.value); }
+      return r;
+    },
+    onChange: function (fn) {
+      sel.addEventListener('change', function () { fill(); show(); fn(); });
+      [lvl, hys, gap].forEach(function (i) { i.addEventListener('input', fn); });
+    }
+  };
+}
+
+/** Why a SET_TRIGGER of the draft cannot go, or null. */
+function ruleInvalid(c) {
+  if (c.trigger === 'none') { return null; }
+  var g = c.min_interval_s;
+  if (!(g >= 0 && g <= 65535 && Math.floor(g) === g)) { return t('device.gapInvalid', 'The minimum gap is a whole number of seconds, 0 to 65535'); }
+  if (LEVEL_TRIGGERS.indexOf(c.trigger) >= 0) {
+    if (!isFinite(c.level)) { return t('device.levelInvalid', 'Give the level as a number'); }
+    if (!(c.hysteresis >= 0)) { return t('device.rearmInvalid', 'The re-arm margin is a number, 0 or more'); }
+  }
+  return null;
 }
 
 /** Mark the row by its draft and recount the edit bar. */
@@ -2122,6 +2240,7 @@ function draftCommands(srcs) {
     if (d.create !== undefined) { out.push({ op: 'CREATE_SUBSCRIPTION', target: target, interval_s: d.create }); return; }
     if (d.enabled !== undefined) { out.push({ op: 'SET_ENABLED', target: target, enabled: d.enabled }); }
     if (d.interval !== undefined) { out.push({ op: 'SET_INTERVAL', target: target, interval_s: d.interval }); }
+    if (d.rule) { out.push(Object.assign({ op: 'SET_TRIGGER', target: target }, d.rule)); }
   });
   return out;
 }
@@ -2180,6 +2299,8 @@ function sendEdits() {
     return v !== undefined && !(v >= 1 && v <= 65535 && Math.floor(v) === v);
   });
   if (bad.length) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
+  var why = cmds.map(function (c) { return c.op === 'SET_TRIGGER' ? ruleInvalid(c) : null; }).filter(Boolean)[0];
+  if (why) { ui.toast(why, 'error'); return; }
   var shorter = cmds.some(function (c) {
     if (c.op !== 'SET_INTERVAL') { return false; }
     var s = sources().filter(function (x) { return x.sourceKey === sourceKeyOf(c.target); })[0];
@@ -2295,17 +2416,26 @@ function commandsCard() {
   return card.el;
 }
 
+// The device sends at most one round of uplinks per minute (TRX_NANO.md §12); the
+// interval is a multiple of 5 s, up to what its wire version carries (§10).
+var MIN_UPLINK_S = 60, UPLINK_STEP_S = 5;
+function maxUplinkS() { return Number(state.client.wireVersion) === 3 ? 65535 * UPLINK_STEP_S : 65535; }
+
 /** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
- * `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). */
+ * `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). Minutes and hours only:
+ * nothing under the device's uplink floor is offered. */
 function uplinkControl(current) {
   var el = h('<div class="ts-uplink-set"><span class="ts-tsrc-every"><span class="ts-uplink-label"></span>' +
     ' <input class="ts-input num sm" type="number" min="1" step="1" inputmode="numeric"><select class="ts-select sm"></select>' +
     '<button type="button" class="ts-btn primary sm" data-a="uplink-interval" hidden>' + esc(t('device.set', 'Set')) + '</button></span></div>');
   el.querySelector('.ts-uplink-label').textContent = t('device.uplinkEveryLabel', 'Uplink every');
   var input = el.querySelector('input'), unit = el.querySelector('select'), setBtn = el.querySelector('button');
-  UNITS.forEach(function (u) { var o = document.createElement('option'); o.value = u.s; o.textContent = u.label; unit.appendChild(o); });
-  if (current) {
-    var u = unitFor(current);
+  // A current value of whole seconds keeps the seconds unit so it shows as it is.
+  var u = current ? unitFor(current) : null;
+  UNITS.filter(function (x) { return x.s >= MIN_UPLINK_S || (u && x.s === u.s); }).forEach(function (x) {
+    var o = document.createElement('option'); o.value = x.s; o.textContent = x.label; unit.appendChild(o);
+  });
+  if (u) {
     unit.value = u.s;
     input.value = current / u.s;
   } else {
@@ -2324,7 +2454,10 @@ function uplinkControl(current) {
   unit.addEventListener('change', changed);
   setBtn.addEventListener('click', function () {
     var v = seconds();
-    if (!(v >= 1 && v <= 65535 && Math.floor(v) === v)) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
+    if (!(v >= MIN_UPLINK_S && v <= maxUplinkS() && v % UPLINK_STEP_S === 0)) {
+      ui.toast(t('device.uplinkIntervalInvalid', 'The uplink interval is a multiple of 5 seconds, 60 to {max}', { max: maxUplinkS() }), 'error');
+      return;
+    }
     send([{ op: 'SET_INTERVAL', target: { mode: 'GLOBAL' }, interval_s: v }],
       v < current ? t('device.uplinkShorter', 'A shorter uplink interval costs battery: the LOGR powers its bus and radio more often.')
         : t('device.uplinkNote', 'Every uplink powers the LOGR’s bus and radio: the shorter the interval, the more battery it costs.'));

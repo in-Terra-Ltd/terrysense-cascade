@@ -24,8 +24,9 @@ var EMPTY_MARKER = '(empty)';
 var TOPOLOGY_TYPE_RE = /^topology\.p(\d+)\.type$/;
 var SOURCE_KEY_RE = /^p(\d+)\.([a-z][A-Za-z0-9]*)(?:\.g(\d+))?(?:\.i(\d+))?$/;
 var NETWORK_KEYS = ['rssi', 'snr'];
-// Device bookkeeping, not readings: radio, uplink markers, the dry contact interface's own counters.
-var NOT_READINGS = ['rssi', 'snr', 'uplinkCause', 'uplinkLatest', 'dryc.drycRuleCount', 'dryc.drycRulesSynced'];
+// Device bookkeeping, not readings: radio, uplink markers (uplinkCause: history before wire v3),
+// the dry contact interface's own counters.
+var NOT_READINGS = ['rssi', 'snr', 'uplinkTriggered', 'uplinkCause', 'uplinkLatest', 'dryc.drycRuleCount', 'dryc.drycRulesSynced'];
 var RULE_SOURCE = /^drycRule\./;
 // A LOGR4 DRYC's fields sit under its position (`p1.drycInput3`), its status under `p1.drycStatus`.
 var DRYC_KEY = /^(dryc|drycRule)\.|^p\d+\.dryc[A-Z]/;
@@ -81,7 +82,7 @@ function sources(m) {
   var out = {};
   function add(key) { var s = parseSource(key); if (s && !out[key]) { out[key] = s; } return out[key]; }
   Object.keys(m.client).forEach(function (key) {
-    var t = /^subscriptions\.(.+)\.(enabled|interval)$/.exec(key);
+    var t = /^subscriptions\.(.+)\.(enabled|interval|trigger|minInterval|level|hysteresis)$/.exec(key);
     var s = t && add(t[1]);
     if (s) { s[t[2]] = m.client[key]; }
   });

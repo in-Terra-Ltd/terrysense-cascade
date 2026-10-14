@@ -52,9 +52,6 @@ var CHANNEL_ALARM_RE = /^(.+)\.(max|min|state)$/;
 function otherAlarms() {
   return [
     { prefix: 'peripheralFault.', text: t('station.alarmSensorFault', 'Sensor fault') },
-    { prefix: 'deviceEvent.movement', text: t('station.alarmMoved', 'Logger moved') },
-    { prefix: 'deviceEvent.batteryCritical', text: t('station.alarmBattery', 'Logger battery critical') },
-    { prefix: 'deviceEvent.power', text: t('station.alarmPower', 'Logger power changed') },
     { prefix: 'deviceHealth', text: t('station.alarmSelfTest', 'Logger self-test fault') },
     { prefix: 'pipelineError', text: t('station.alarmPipeline', 'Data processing error') }
   ];
