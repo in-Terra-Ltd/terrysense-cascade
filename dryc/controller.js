@@ -39,7 +39,7 @@ var INPUTS = 8, RELAYS = 2, MAX_RECORDS = 16, DAY_MS = 86400000;
 // The firmware the rules checksum and supply-voltage conditions need (DRYC.md §5);
 // an older logger or DRYC keeps today's behaviour and the view says what to update.
 var LOGGER_FW_MIN = '0.44.0', DRYC_FW_MIN = '1.3.0';
-// A LOGR4 runs supply-voltage records from logr-logic 1.19.0 and reports no DRYC firmware (TRX_NANO.md §10.4).
+// A LOGR4 runs supply-voltage records from logr-logic 1.19.0 and reports the DRYC firmware in PERIPHERAL_INFO (TRX_NANO.md §6.2).
 var NANO_FW_MIN = '1.19.0';
 var VOLT_OPS = { below: 1, above: 2 };
 var POLL_MS = opts.pollMs || 15000;
@@ -95,10 +95,12 @@ function versionAtLeast(v, min) {
  * supply-voltage conditions. Both need the two minimum versions. */
 function capability() {
   var logger = state.client['deviceInfo.fwVersion'] || null, dryc = state.client['deviceInfo.drycFwVersion'] || null;
-  // An older DRYC behind a LOGR4 refuses a voltage record and the ACK says so: only the logger gates.
+  // Behind a LOGR4 an older DRYC refuses a voltage record and the ACK says so: an unreported DRYC firmware does not gate.
   if (nano()) {
     var ok = versionAtLeast(logger, NANO_FW_MIN);
-    return { logger: logger, dryc: null, loggerOk: ok, drycOk: ok, voltage: ok, crc: ok };
+    dryc = state.position ? state.client['peripheralInfo.p' + state.position + '.fwVersion'] || null : null;
+    var nanoDrycOk = ok && (!dryc || versionAtLeast(dryc, DRYC_FW_MIN));
+    return { logger: logger, dryc: dryc, loggerOk: ok, drycOk: nanoDrycOk, voltage: nanoDrycOk, crc: ok };
   }
   var loggerOk = versionAtLeast(logger, LOGGER_FW_MIN), drycOk = loggerOk && versionAtLeast(dryc, DRYC_FW_MIN);
   return { logger: logger, dryc: dryc, loggerOk: loggerOk, drycOk: drycOk, voltage: drycOk, crc: drycOk };
@@ -556,7 +558,7 @@ function firmwareBanners() {
   if (!cap.loggerOk) {
     banner('warn', 'logger-fw', t('dryc.loggerFw', 'Logger firmware {version}. Update it to {min} or later to confirm the rules the device holds and to use supply-voltage conditions. Until then the view compares only the number of rules.',
       { version: version(cap.logger), min: loggerMin() }));
-  } else if (nano() && blocked) {
+  } else if (nano() && !cap.dryc && blocked) {
     banner('warn', 'dryc-fw-unknown', esc(t('dryc.drycFwUnknown', 'A supply-voltage condition needs dry contact interface firmware {min} or later, which this logger does not report. An older interface refuses the rules, and this view then shows Refused.', { min: DRYC_FW_MIN })));
   } else if (!cap.drycOk) {
     banner('warn', 'dryc-fw', t('dryc.drycFw', 'Dry contact interface firmware {version}. Update it to {min} or later to confirm the rules it holds and to use supply-voltage conditions.',
