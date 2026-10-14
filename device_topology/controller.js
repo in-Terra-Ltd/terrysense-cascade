@@ -1110,23 +1110,28 @@ function followUpCard() {
 /** Positions whose wired sources went silent while another position, feeding
  * no station, reports the same peripheral type — by its topology type when
  * both are listed, else by the kinds it measures: `[{from, to, since}]`. */
+function sourceTs(s) { return (state.latest[s.sourceKey] || {}).ts || 0; }
+function newestTs(list) { return Math.max.apply(null, list.map(sourceTs)); }
+/** No reading for SILENT_INTERVALS of its interval, or of the base interval when it has none. */
+function silentSource(s) {
+  var iv = Number(s.interval) || Number(state.client['status.baseIntervalSeconds']) || 0;
+  return !!iv && Date.now() - sourceTs(s) > SILENT_INTERVALS * iv * 1000;
+}
+
 function busMoves(nodes, srcs) {
-  var base = Number(state.client['status.baseIntervalSeconds']) || 0, byPos = {}, moves = [];
+  var byPos = {}, moves = [];
   srcs.forEach(function (s) { if (s.position) { (byPos[s.position] = byPos[s.position] || []).push(s); } });
-  function ts(s) { return (state.latest[s.sourceKey] || {}).ts || 0; }
-  function newest(list) { return Math.max.apply(null, list.map(ts)); }
-  function silent(s) { var iv = Number(s.interval) || base; return !!iv && Date.now() - ts(s) > SILENT_INTERVALS * iv * 1000; }
   Object.keys(byPos).forEach(function (p) {
     var wired = byPos[p].filter(function (s) { return state.wiring[s.sourceKey]; });
-    if (!wired.length || !newest(wired) || !wired.every(silent)) { return; }
+    if (!wired.length || !newestTs(wired) || !wired.every(silentSource)) { return; }
     var kinds = wired.map(function (s) { return s.kind; });
     var to = Object.keys(byPos).filter(function (q) {
       var own = byPos[q];
-      if (q === p || own.some(function (s) { return state.wiring[s.sourceKey]; }) || newest(own) <= newest(wired) || own.every(silent)) { return false; }
+      if (q === p || own.some(function (s) { return state.wiring[s.sourceKey]; }) || newestTs(own) <= newestTs(wired) || own.every(silentSource)) { return false; }
       return nodes[p] && nodes[q] ? nodes[p].type === nodes[q].type
         : kinds.every(function (k) { return own.some(function (s) { return s.kind === k; }); });
     })[0];
-    if (to) { moves.push({ from: Number(p), to: Number(to), since: newest(wired) }); }
+    if (to) { moves.push({ from: Number(p), to: Number(to), since: newestTs(wired) }); }
   });
   return moves;
 }
@@ -1538,7 +1543,15 @@ function topologySection() {
     srcs.forEach(function (s) { positions[s.position] = true; });
     delete positions[0];
     busMoves(nodes, srcs).forEach(function (m) { bus.appendChild(moveBanner(m)); });
-    Object.keys(positions).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) { bus.appendChild(positionCard(pos, nodes[pos], srcs)); });
+    // A complete TOPOLOGY report leaves out a removed position (TRX_NANO.md §1.3); before any, absence says nothing.
+    var reported = state.client['topology.frame'] !== undefined, removed = [], former = [];
+    Object.keys(positions).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) {
+      if (nodes[pos] || !reported) { bus.appendChild(positionCard(pos, nodes[pos], srcs)); return; }
+      var own = srcs.filter(function (s) { return s.position === pos; });
+      (own.length && own.every(silentSource) ? former : removed).push(pos);
+    });
+    removed.forEach(function (pos) { bus.appendChild(positionCard(pos, null, srcs, true)); });
+    if (former.length) { bus.appendChild(formerPositions(former, srcs)); }
   } else {
     var keys = readings();
     var parts = fam === 'logr2' ? logr2Parts(keys) : [{ id: 'device', label: state.device.type || t('common.device', 'Device'), keys: keys }];
@@ -1606,7 +1619,19 @@ function wireText(key) {
   return function (f) { return '→ ' + f.station + (f.channel !== key ? ' · ' + (f.label ? t.label(f.channel, f.label, state.names) + ' (' + f.channel + ')' : f.channel) : ''); };
 }
 
-function positionCard(pos, node, srcs) {
+/** Removed positions whose readings have all gone silent, folded out of the way. */
+function formerPositions(list, srcs) {
+  var box = foldable('former', false);
+  box.dataset.former = list.length;
+  box.querySelector('.ts-pos-name').textContent = t('device.formerPositions', 'Former positions');
+  var since = Math.max.apply(null, list.map(function (pos) { return newestTs(srcs.filter(function (s) { return s.position === pos; })); }));
+  box.querySelector('.ts-pos-head .ts-mono').textContent = t('device.formerSince', 'Removed from the bus, silent since {when}', { when: ui.when(since) });
+  box.querySelector('.ts-pos-count').textContent = String(list.length);
+  list.forEach(function (pos) { box.appendChild(positionCard(pos, null, srcs, true)); });
+  return box;
+}
+
+function positionCard(pos, node, srcs, removed) {
   var own = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
   var bad = own.filter(function (s) { return sourceState(s).state === 'fault' || state.faults[s.sourceKey]; });
   var box = foldable('p' + pos, false);
@@ -1614,12 +1639,17 @@ function positionCard(pos, node, srcs) {
   var flags = box.querySelector('.ts-pos-head .ts-grow').appendChild(h('<div class="ts-pos-flags"></div>'));
   box.querySelector('.ts-pos-num').textContent = pos;
   var p = node && state.peripherals[node.type];
-  box.querySelector('.ts-pos-name').textContent = pos === 0 ? t('mapping.logrItself', 'LOGR itself') : (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral'));
-  box.querySelector('.ts-pos-head .ts-mono').textContent = node ? node.type + (node.version !== undefined && node.version !== null ? ' · v' + node.version : '') : '';
+  box.querySelector('.ts-pos-name').textContent = pos === 0 ? t('mapping.logrItself', 'LOGR itself')
+    : removed ? t('device.removedFromBus', 'Removed from the bus')
+    : (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral'));
+  box.querySelector('.ts-pos-head .ts-mono').textContent = node ? node.type + (node.version !== undefined && node.version !== null ? ' · v' + node.version : '')
+    : removed && own.length ? t('device.lastReading', 'last reading {when}', { when: ui.when(newestTs(own)) }) : '';
   var dryc = pos !== 0 && !!node && /^dryc/.test(node.type);
   var fields = dryc ? drycFields(pos) : [];
   box.querySelector('.ts-pos-count').textContent = countText(own.length + fields.length);
-  if (!node) { flags.appendChild(h('<span class="ts-chip warn"></span>')).textContent = t('device.notInTopology', 'not in the topology report'); }
+  if (removed) {
+    box.dataset.removed = '1';
+  } else if (!node) { flags.appendChild(h('<span class="ts-chip warn"></span>')).textContent = t('device.notInTopology', 'not in the topology report'); }
   else if (!p && pos !== 0) { flags.appendChild(h('<span class="ts-chip warn"></span>')).textContent = t('device.notInCatalog', 'not in the catalog'); }
   if (bad.length) { flags.appendChild(h('<span class="ts-chip fault"></span>')).textContent = t('device.faultingCount', '{n} faulting', { n: bad.length }); }
   var more = unsubscribed(pos, node, own).length;
@@ -1628,7 +1658,7 @@ function positionCard(pos, node, srcs) {
     avail.title = t('device.availableTip', 'Measurements this peripheral offers that the LOGR does not subscribe, from the catalog');
     avail.textContent = t('device.available', '+{n} available', { n: more });
   }
-  if (pos !== 0 && !own.concat(fields).some(function (x) { return state.wiring[x.sourceKey || x]; })) {
+  if (pos !== 0 && !removed && !own.concat(fields).some(function (x) { return state.wiring[x.sourceKey || x]; })) {
     flags.appendChild(h('<span class="ts-chip warn" data-unwired="1"></span>')).textContent = t('device.notWired', 'not wired to any station');
   }
   if (state.writable && more) {
