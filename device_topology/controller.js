@@ -1735,7 +1735,9 @@ function sourceRow(s, node, diagnostic) {
       : t('device.faultSince', 'since {time}', { time: ui.when(st.ts) }), 'fault');
     stateChip(row, 'fault', t('device.faultChip', 'Fault'), 'fault');
   } else if (st.state === 'ok') {
-    latestCell(row, fmtValue(st.value), unit, t.ago(st.ts));
+    // A DRYC's status is a packed record: its fields are the reading rows below it.
+    latestCell(row, s.kind === 'drycStatus' ? t('device.drycUnpacked', 'unpacked below') : fmtValue(st.value), s.kind === 'drycStatus' ? '' : unit, t.ago(st.ts),
+      s.kind === 'drycStatus' ? 'packed' : null);
     stateChip(row, 'ok', t('common.ok', 'OK'), 'ok');
   } else if (st.state === 'disabled') {
     latestCell(row, '—', '', t('device.switchedOff', 'subscription switched off'));
@@ -1748,7 +1750,12 @@ function sourceRow(s, node, diagnostic) {
     row.querySelector('.ts-mc-state').appendChild(h('<span class="ts-chip fault" data-alarm="1">' + ICON.bell + '</span>')).title = t('device.faultAlarmTip', 'Active peripheralFault alarm');
   }
   everyCell(row.querySelector('.ts-mc-every'), s, row);
-  var unstored = storeCell(row, s.sourceKey, diagnostic);
+  var unstored = false;
+  if (s.kind === 'drycStatus') {
+    row.querySelector('.ts-mc-store').appendChild(h('<span class="ts-wire-diag"></span>')).textContent = t('device.drycFieldsBelow', 'each field stored on its own row');
+  } else {
+    unstored = storeCell(row, s.sourceKey, diagnostic);
+  }
   return { el: row, attention: st.state === 'fault' || st.state === 'waiting' || !!state.faults[s.sourceKey], unstored: unstored };
 }
 
