@@ -1735,9 +1735,7 @@ function sourceRow(s, node, diagnostic) {
       : t('device.faultSince', 'since {time}', { time: ui.when(st.ts) }), 'fault');
     stateChip(row, 'fault', t('device.faultChip', 'Fault'), 'fault');
   } else if (st.state === 'ok') {
-    // A DRYC's status is a packed record: its fields are the reading rows below it.
-    latestCell(row, s.kind === 'drycStatus' ? t('device.drycUnpacked', 'unpacked below') : fmtValue(st.value), s.kind === 'drycStatus' ? '' : unit, t.ago(st.ts),
-      s.kind === 'drycStatus' ? 'packed' : null);
+    latestCell(row, fmtValue(st.value), unit, t.ago(st.ts));
     stateChip(row, 'ok', t('common.ok', 'OK'), 'ok');
   } else if (st.state === 'disabled') {
     latestCell(row, '—', '', t('device.switchedOff', 'subscription switched off'));
@@ -1750,13 +1748,10 @@ function sourceRow(s, node, diagnostic) {
     row.querySelector('.ts-mc-state').appendChild(h('<span class="ts-chip fault" data-alarm="1">' + ICON.bell + '</span>')).title = t('device.faultAlarmTip', 'Active peripheralFault alarm');
   }
   everyCell(row.querySelector('.ts-mc-every'), s, row);
-  var unstored = false;
-  if (s.kind === 'drycStatus') {
-    row.querySelector('.ts-mc-store').appendChild(h('<span class="ts-wire-diag"></span>')).textContent = t('device.drycFieldsBelow', 'each field stored on its own row');
-  } else {
-    unstored = storeCell(row, s.sourceKey, diagnostic);
-  }
-  return { el: row, attention: st.state === 'fault' || st.state === 'waiting' || !!state.faults[s.sourceKey], unstored: unstored };
+  var attention = st.state === 'fault' || st.state === 'waiting' || !!state.faults[s.sourceKey], unstored = false;
+  if (s.kind === 'drycStatus') { attention = drycCells(row, 'p' + s.position + '.', s.position) || attention; }
+  else { unstored = storeCell(row, s.sourceKey, diagnostic); }
+  return { el: row, attention: attention, unstored: unstored };
 }
 
 /** A reading that is no subscribed source: a LOGR2 or another device's key, a DRYC's unpacked field. */
@@ -1824,10 +1819,9 @@ function positionGroup(pos, node, srcs, removed) {
   if (state.writable && state.editing && more.length) {
     g.act('<button type="button" class="ts-btn sm ts-add" data-a="add">' + ICON.plus + esc(t('device.addMeasurement', 'Add measurement')) + '</button>', function () { addDrawer(pos, node, own); });
   }
-  if (dryc) { drycButton(g); }
   own.forEach(function (s) { g.add(sourceRow(s, node, pos === 0)); });
-  fields.forEach(function (key) { g.add(readingRow(key, false, true)); });
-  if (dryc && (own.length || fields.length)) { g.add(drycRulesRow(pos)); }
+  // A DRYC's inputs, relays and rules belong to its own view: one row of their state, which opens it.
+  if (dryc && fields.length && !own.some(function (s) { return s.kind === 'drycStatus'; })) { g.add(drycRow('p' + pos + '.', pos, true)); }
   addedRows(pos).forEach(function (r) { g.add(r); });
   if (!g.rows.length) {
     var empty = mrow(true);
@@ -1842,10 +1836,10 @@ function positionGroup(pos, node, srcs, removed) {
   var faulting = g.rows.filter(function (r) { return r.el.dataset.state === 'fault' || r.el.querySelector('[data-alarm]'); }).length;
   var unstored = g.rows.filter(function (r) { return r.unstored; }).length;
   if (pos === 0) {
-    g.sum(own.length === 1 ? t('device.diagnosticOne', '1 diagnostic') : t('device.diagnosticMany', '{n} diagnostics', { n: own.length }));
+    if (own.length) { g.sum(own.length === 1 ? t('device.diagnosticOne', '1 diagnostic') : t('device.diagnosticMany', '{n} diagnostics', { n: own.length })); }
   } else if (faulting) {
     g.flag('fault', t('device.faultingCount', '{n} faulting', { n: faulting }));
-  } else if (!removed && (own.length || fields.length)) {
+  } else if (!removed && !dryc && own.length) {
     g.sum(unstored ? (unstored === 1 ? t('device.notStoredOne', '1 not stored') : t('device.notStoredMany', '{n} not stored', { n: unstored })) : t('device.allStoredShort', 'all stored'));
   }
   return g;
@@ -1895,35 +1889,73 @@ function drycSync(pos) {
   return sent.cmd.rules_crc16 === crc ? { cls: 'ok', text: t('dryc.onDevice', 'On the device') } : { cls: 'warn', text: t('dryc.sendNeeded', 'Send needed') };
 }
 
-/** The rule records a LOGR4 DRYC holds, its rules checksum and whether it matches the rules sent. */
-function drycRulesRow(pos) {
-  var count = state.latest['p' + pos + '.drycRuleCount'], crc = state.latest['p' + pos + '.drycRulesCrc16'];
-  var row = mrow(true);
-  row.dataset.drycRules = '1';
-  row.querySelector('.ts-row-label').textContent = t('device.drycRecords', 'Rule records');
-  var crcValue = crc ? Number(crc.value) || 0 : 0;
-  nameSub(row, 'p' + pos + '.drycRulesCrc16 ' + (crcValue ? '0x' + ('000' + crcValue.toString(16).toUpperCase()).slice(-4) : '–'), 'ts-mono');
-  latestCell(row, count ? fmtValue(count.value) : '–', '', count ? t.ago(count.ts) : '');
-  var sync = drycSync(pos);
-  if (sync) {
-    var chip = row.querySelector('.ts-mc-state').appendChild(h('<span class="ts-chip"></span>'));
-    if (sync.cls) { chip.classList.add(sync.cls); }
-    chip.dataset.drycSync = sync.cls || 'unknown';
-    chip.textContent = sync.text;
+/** A DRYC in one row: which inputs and relays are on, its supply and, on a LOGR4, where its rules stand.
+ * Its inputs, relays and rules are set up in its own view (DRYC.md), which the row opens; returns
+ * whether its rules need a look. `prefix` is `p<POS>.` on a LOGR4, `dryc.` on a LOGR2, whose rules are the station's. */
+function drycCells(row, prefix, pos) {
+  var lat = state.latest, ts = 0;
+  function on(name, n) {
+    var out = [];
+    for (var i = 1; i <= n; i++) {
+      var v = lat[prefix + name + i];
+      if (!v) { continue; }
+      ts = Math.max(ts, v.ts);
+      if (truthyFlag(v.value) || v.value === '1') { out.push(i); }
+    }
+    return out.length ? out.join(', ') : t('common.none', 'none');
   }
-  return { el: row, attention: !!sync && sync.cls === 'fault', unstored: false };
+  var parts = [t('device.drycInputsOn', 'Inputs on: {list}', { list: on('drycInput', 8) }), t('device.drycRelaysOn', 'Relays on: {list}', { list: on('drycOutput', 2) })];
+  var volt = lat[prefix + 'drycVoltage'];
+  if (volt) {
+    ts = Math.max(ts, volt.ts);
+    parts.push(t('device.drycSupply', 'supply {v} V', { v: fmtValue(volt.value) }));
+  }
+  var cell = row.querySelector('.ts-mc-latest');
+  cell.innerHTML = '';
+  cell.appendChild(h('<div class="ts-dryc-line"></div>')).textContent = parts.join(' · ');
+  var sync = null;
+  if (pos !== null) {
+    var count = lat[prefix + 'drycRuleCount'];
+    var rules = cell.appendChild(h('<div class="ts-dryc-rules" data-dryc-rules="1"><span></span></div>'));
+    rules.firstChild.textContent = !count ? '' : Number(count.value) === 1 ? t('dryc.ruleCountOne', '1 rule')
+      : t('dryc.ruleCountMany', '{n} rules', { n: fmtValue(count.value) });
+    sync = drycSync(pos);
+    if (sync) {
+      var chip = rules.appendChild(h('<span class="ts-chip"></span>'));
+      if (sync.cls) { chip.classList.add(sync.cls); }
+      chip.dataset.drycSync = sync.cls || 'unknown';
+      chip.textContent = sync.text;
+    }
+  }
+  if (ts) { cell.appendChild(h('<div class="ts-row-meta"></div>')).textContent = t.ago(ts); }
+  var store = row.querySelector('.ts-mc-store');
+  store.innerHTML = '';
+  drycLink(store);
+  return !!sync && sync.cls === 'fault';
 }
 
-/** The DRYC is set up on a station (DRYC.md §1): its header opens the Dry contact interface view, the station holding rules first. */
-function drycButton(g) {
+/** The DRYC's row when no subscribed status carries it: a LOGR2's, or a LOGR4's before its SUBSCRIPTIONS report. */
+function drycRow(prefix, pos, bus) {
+  var row = mrow(bus);
+  row.dataset.dryc = '1';
+  row.querySelector('.ts-row-label').textContent = t('device.drycState', 'Inputs, relays and supply');
+  return { el: row, attention: drycCells(row, prefix, pos), unstored: false };
+}
+
+/** Opens the Dry contact interface view of the station holding the rules (DRYC.md §1), or says a station is needed first. */
+function drycLink(container) {
   var st = state.bindings.slice().sort(function (a, b) {
     return !!parseJson(b.attrs['dryc.rules']) - !!parseJson(a.attrs['dryc.rules']);
   })[0];
-  if (!st) { g.sum(t('device.drycNoStation', 'Inputs, relays and rules are set up on a station: connect this device to one first.')); return; }
+  if (!st) {
+    container.appendChild(h('<span class="ts-wire-diag"></span>')).textContent = t('device.drycNoStation', 'Inputs, relays and rules are set up on a station: connect this device to one first.');
+    return;
+  }
   if (!opts.projectDashboardId) { return; }
-  g.act('<button type="button" class="ts-btn sm" data-a="relays"></button>', function () {
-    tb.openDashboard(opts.projectDashboardId, 'dryc', st.station);
-  }).textContent = t('device.setUpOn', 'Set up on {station}', { station: st.station.name });
+  var b = container.appendChild(h('<button type="button" class="ts-btn sm" data-a="relays"><span></span>' + ICON.chev + '</button>'));
+  b.firstChild.textContent = t('device.drycView', 'Dry contact interface view');
+  b.title = st.station.name;
+  b.addEventListener('click', function () { tb.openDashboard(opts.projectDashboardId, 'dryc', st.station); });
 }
 
 // -- LOGR2 and other devices ---------------------------------------------------------------
@@ -1947,10 +1979,10 @@ function partGroup(part, logr2) {
   g.num(logr2 && !logger ? part.id : logger ? 0 : null, logr2 && !logger ? 'prefix' : null);
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
   g.mono('');
-  if (part.id === 'dryc') { drycButton(g); }
   if (LOGR2_SENSORS[part.id] && state.writable) {
     g.act('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteSensorData(part); });
   }
+  if (part.id === 'dryc') { g.add(drycRow('dryc.', null, false)); return g; }
   part.keys.slice().sort(function (a, b) { return labelOf(a).localeCompare(labelOf(b)); })
     .forEach(function (key) { g.add(readingRow(key, logger, false)); });
   var unstored = g.rows.filter(function (r) { return r.unstored; }).length;
