@@ -86,6 +86,10 @@ root.TerrySenseTbIo = function (ctx) {
 
   var io = {
     fetchAttrs: function (entity) { return attrsMap(entity); },
+    fetchClientAttrs: function (entity) { return attrsMap(entity, 'CLIENT_SCOPE'); },
+    fetchDevice: function (id) {
+      return get('/api/device/' + id).then(function (d) { return d ? deviceLevel(d) : null; }).catch(function () { return null; });
+    },
     fetchParent: function (entity) {
       return relatedAssets(entity.id, 'TO').then(function (assets) { return assets.length ? assetLevel(assets[0]) : null; });
     },

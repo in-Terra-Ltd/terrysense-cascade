@@ -41,6 +41,12 @@
  *   fetchDeviceDefaults(profile)    -> {entityType:'ASSET', id, name} | null
  *   fetchProfileDevices(profile)    -> [device]       the devices of one profile
  *
+ * For the names of a LOGR's sources (`effective.sourceNames`, and the device
+ * labels in `effective.messageLabels`):
+ *
+ *   fetchDevice(id)                 -> {entityType:'DEVICE', id, name, kind} | null
+ *   fetchClientAttrs(entity)        -> {key: value}   CLIENT_SCOPE attributes (the topology)
+ *
  * `entity` / level objects carry `{entityType, id, name, kind}` — `kind` is
  * the ThingsBoard asset *type* string ("Station", "Project", "Defaults", …),
  * never the measurement kind. A resolved chain level also carries `role`:
@@ -90,6 +96,8 @@ var CONTACT_BOOK_KIND = 'ContactBook';
 // (ALARMING.md §4). A text set below DEFAULTS wins over it.
 var TEXT_CATALOGUE_KEY = 'alarmTextByLanguage';
 var DEFAULT_LANGUAGE = 'en';
+// The decoder's mark for a position a complete TOPOLOGY report no longer lists.
+var EMPTY_POSITION = '(empty)';
 
 function isTextKey(name) { return /^(alarmText|emailText)\./.test(name); }
 
@@ -214,6 +222,12 @@ function createCache() { return {}; }
 function attrsOf(level, io, cache) {
   var key = level.entityType + ':' + level.id;
   if (!cache[key]) { cache[key] = io.fetchAttrs(level); }
+  return cache[key];
+}
+
+function clientAttrsOf(entity, io, cache) {
+  var key = 'CLIENT:' + entity.id;
+  if (!cache[key]) { cache[key] = Promise.resolve(io.fetchClientAttrs(entity)); }
   return cache[key];
 }
 
@@ -706,27 +720,116 @@ function deviceChannels(chain, io, cache) {
   });
 }
 
+// -- source names (ALARMING.md §4) -------------------------------------------
+
+/** `{sourceKey: name}` of a LOGR3 or LOGR4: the catalog `defaultName` of every
+ * measure of every peripheral its `topology.p<POS>.type` reports, position 0
+ * being its own board (`logr4` -> `logr-4`), which the TOPOLOGY report does not
+ * list. Keys as the decoder builds them; only names the instance knows. Mirrors
+ * `source_names()` in config_resolver.py. */
+function sourceNames(device, clientAttrs, peripherals, names) {
+  var board = /^logr(\d)$/.exec(String((device && device.kind) || ''));
+  if (!board) { return {}; }
+  var types = { 0: 'logr-' + board[1] };
+  Object.keys(clientAttrs || {}).forEach(function (k) {
+    var m = /^topology\.p(\d+)\.type$/.exec(k);
+    var type = String(clientAttrs[k] == null ? '' : clientAttrs[k]).trim();
+    if (m && type && type !== EMPTY_POSITION) { types[Number(m[1])] = type; }
+  });
+  var out = {};
+  Object.keys(types).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) {
+    (((peripherals || {})[types[pos]] || {}).measures || []).forEach(function (x) {
+      if (!Object.prototype.hasOwnProperty.call(names || {}, x.defaultName)) { return; }
+      out['p' + pos + '.' + camelKind(x.kind) + (x.group ? '.g' + x.group : '') + (x.index ? '.i' + x.index : '')] = x.defaultName;
+    });
+  });
+  return out;
+}
+
+/** A LOGR's `effective.sourceNames`, and the dictionary label of each configured
+ * source key that resolves no label of its own. Mirrors `_resolve_source_names`. */
+function sourceNameEntries(device, keys, channelEntries, io, cache) {
+  if (!io.fetchClientAttrs) { return Promise.resolve([]); }
+  return Promise.all([clientAttrsOf(device, io, cache), defaultsJson('peripherals', io, cache), channelNamesOf(io, cache)]).then(function (got) {
+    var names = got[2], found = sourceNames(device, got[0], got[1], names);
+    if (!Object.keys(found).length) { return []; }
+    var out = [{ effectiveKey: EFFECTIVE_PREFIX + 'sourceNames', overrideKey: CONFIG_PREFIX + 'peripherals',
+      value: found, source: 'Topology · peripheral catalog', level: null }];
+    var produced = {};
+    channelEntries.forEach(function (e) { produced[e.effectiveKey] = true; });
+    Object.keys(keys).forEach(function (key) {
+      var label = (names[found[key]] || {}).label;
+      if (label && !produced[EFFECTIVE_PREFIX + key + '.label']) {
+        out.push({ effectiveKey: EFFECTIVE_PREFIX + key + '.label', overrideKey: CHANNEL_PREFIX + key + '.label',
+          value: label, source: 'Channel dictionary', level: null });
+      }
+    });
+    return out;
+  });
+}
+
+/** The label of every name the sources of the station's devices carry, in its
+ * language: what a device alarm's `${alarmLabel}` shows. A label a level sets
+ * stays as typed. Mirrors `_device_labels` in config_resolver.py. */
+function deviceLabels(chain, stationAttrs, scalarEntries, io, cache) {
+  if (!io.fetchDevice || !io.fetchClientAttrs) { return Promise.resolve({}); }
+  var lang = scalarEntries.filter(function (e) { return e.effectiveKey === EFFECTIVE_PREFIX + 'language'; })[0];
+  var language = lang ? String(lang.value) : null;
+  var ids = mapDevices(mapEntries(stationAttrs && stationAttrs[CONFIG_PREFIX + 'channelMap']));
+  var labels = {};
+  return Promise.all([defaultsJson('peripherals', io, cache), channelNamesOf(io, cache)]).then(function (got) {
+    var peripherals = got[0], names = got[1];
+    return ids.reduce(function (work, id) {
+      return work.then(function () { return Promise.resolve(io.fetchDevice(id)); }).then(function (device) {
+        if (!device) { return null; }
+        return clientAttrsOf(device, io, cache).then(function (client) {
+          var found = sourceNames(device, client, peripherals, names);
+          return Object.keys(found).reduce(function (inner, key) {
+            return inner.then(function () {
+              var name = found[key];
+              if (name in labels) { return null; }
+              return resolveField(chain, name, null, 'label', io, cache).then(function (hit) {
+                if (!hit) { return; }
+                var value = hit.value;
+                if (hit.source === 'Channel dictionary') {
+                  value = (((names[name] || {}).translations || {})[language] || {}).label || value;
+                }
+                labels[name] = value;
+              });
+            });
+          }, Promise.resolve());
+        });
+      });
+    }, Promise.resolve());
+  }).then(function () { return labels; });
+}
+
 // -- resolve a station --------------------------------------------------
 
 /** `effective.messageLabels`: the dictionary labels of the station's channels
- * in its `effective.language`, for alarm messages only (ALARMING.md §4).
- * `effective.<channel>.label` stays English, and a label a level sets is never
- * translated. Mirrors `_resolve_message_labels` in config_resolver.py. */
-function messageLabels(scalarEntries, channelEntries, names) {
+ * in its `effective.language`, for alarm messages only (ALARMING.md §4), then
+ * `devLabels` for the names no channel took. `effective.<channel>.label` stays
+ * English, and a label a level sets is never translated. Mirrors
+ * `_resolve_message_labels` in config_resolver.py. */
+function messageLabels(scalarEntries, channelEntries, names, devLabels) {
   var lang = scalarEntries.filter(function (e) { return e.effectiveKey === EFFECTIVE_PREFIX + 'language'; })[0];
   var language = lang ? String(lang.value) : null;
-  if (!language || language === DEFAULT_LANGUAGE) { return []; }
   var labels = {}, any = false;
-  channelEntries.forEach(function (e) {
-    if (!/\.label$/.test(e.effectiveKey) || e.source !== 'Channel dictionary') { return; }
-    var channel = e.effectiveKey.slice(EFFECTIVE_PREFIX.length, -'.label'.length);
-    var split = splitChannelKey(channel);
-    var text = (((names[split.name] || {}).translations || {})[language] || {}).label;
-    if (text) { labels[channel] = split.instance ? text + ' ' + split.instance : text; any = true; }
+  if (language && language !== DEFAULT_LANGUAGE) {
+    channelEntries.forEach(function (e) {
+      if (!/\.label$/.test(e.effectiveKey) || e.source !== 'Channel dictionary') { return; }
+      var channel = e.effectiveKey.slice(EFFECTIVE_PREFIX.length, -'.label'.length);
+      var split = splitChannelKey(channel);
+      var text = (((names[split.name] || {}).translations || {})[language] || {}).label;
+      if (text) { labels[channel] = split.instance ? text + ' ' + split.instance : text; any = true; }
+    });
+  }
+  Object.keys(devLabels || {}).forEach(function (n) {
+    if (!(n in labels)) { labels[n] = devLabels[n]; any = true; }
   });
   return any ? [{
     effectiveKey: EFFECTIVE_PREFIX + 'messageLabels', overrideKey: CONFIG_PREFIX + 'language',
-    value: labels, source: 'Channel dictionary · ' + language, level: null
+    value: labels, source: 'Channel dictionary · ' + (language || DEFAULT_LANGUAGE), level: null
   }] : [];
 }
 
@@ -737,7 +840,7 @@ function resolveStation(station, io, cache) {
   var device = station.entityType === 'DEVICE';
   return buildChain(station, io).then(function (chain) {
     return Promise.all([attrsOf(chain[0], io, cache), channelNamesOf(io, cache)]).then(function (got) {
-      var names = got[1];
+      var stationAttrs = got[0], names = got[1];
       return (device ? deviceChannels(chain, io, cache) : Promise.resolve(channelsFromAttrs(got[0], got[1]))).then(function (keys) {
         var channelEntries = [];
         var fields = channelFields();
@@ -760,9 +863,14 @@ function resolveStation(station, io, cache) {
 
         return work.then(function () {
           return Promise.all([device ? resolveDeviceScalars(chain, io, cache) : resolveScalars(chain, io, cache),
-            device ? [] : unitFactors(keys, io, cache)]);
+            device ? [] : unitFactors(keys, io, cache),
+            device ? sourceNameEntries(station, keys, channelEntries, io, cache) : []]);
         }).then(function (got) {
-          var entries = got[0].concat(channelEntries, messageLabels(got[0], channelEntries, names), got[1]);
+          return (device ? Promise.resolve({}) : deviceLabels(chain, stationAttrs, got[0], io, cache)).then(function (devLabels) {
+            return got.concat([devLabels]);
+          });
+        }).then(function (got) {
+          var entries = got[0].concat(channelEntries, got[2], messageLabels(got[0], channelEntries, names, got[3]), got[1]);
           var effective = {};
           entries.forEach(function (e) { effective[e.effectiveKey] = e.value; });
           return { station: station, chain: chain, measuredKeys: keys, entries: entries, effective: effective };
@@ -847,6 +955,7 @@ return {
   deviceSourceKey: deviceSourceKey,
   deviceKeyKind: deviceKeyKind,
   deviceChannels: deviceChannels,
+  sourceNames: sourceNames,
   inheritedValue: inheritedValue
 };
 
