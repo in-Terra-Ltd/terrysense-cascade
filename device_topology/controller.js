@@ -65,7 +65,7 @@ var FAULT_PREFIX = 'peripheralFault.';
 var REFRESH_MS = 60000;
 var HOUR_MS = 3600000;
 var DAY_MS = 86400000;
-var BATTERY_VOLTAGE = ['p0.voltage', 'p0.voltage.i0', 'logr.batteryVoltage'];
+var BATTERY_VOLTAGE = ['p0.voltage', 'logr.batteryVoltage'];
 // The LOGR's power inputs, named as the vocabulary names chargerSource's states.
 function powerSources() {
   function s(token, english) { return t.state('chargerSource', token, english); }
@@ -274,7 +274,7 @@ function targetText(tg) {
   if (!tg || tg.mode === 'GLOBAL' || !tg.mode) { return ''; }
   if (tg.mode === 'POSITION') { return t('device.targetPosition', ' at position {pos}', { pos: tg.position }); }
   return t('device.targetSource', ' of {source}', {
-    source: 'p' + tg.position + '.' + camel(tg.kind) + (tg.group ? '.g' + tg.group : '') + (tg.index !== undefined ? '.i' + tg.index : '')
+    source: 'p' + tg.position + '.' + camel(tg.kind) + (tg.group ? '.g' + tg.group : '') + (tg.index ? '.i' + tg.index : '')
   });
 }
 
@@ -2313,7 +2313,7 @@ function sendEdits() {
   });
 }
 
-function sourceKeyOf(tg) { return 'p' + tg.position + '.' + camel(tg.kind) + (tg.group ? '.g' + tg.group : '') + (tg.index !== undefined && tg.index !== 0 ? '.i' + tg.index : ''); }
+function sourceKeyOf(tg) { return 'p' + tg.position + '.' + camel(tg.kind) + (tg.group ? '.g' + tg.group : '') + (tg.index ? '.i' + tg.index : ''); }
 
 // -- rail -------------------------------------------------------------------------------
 

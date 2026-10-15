@@ -499,7 +499,7 @@ function deviceRef(d) { return { entityType: 'DEVICE', id: d.id, name: d.name, l
 
 function livenessLabels() { return { live: t('fleet.live', 'Live'), inactive: t('fleet.inactive', 'Inactive'), never: t('common.neverHeard', 'Never heard from') }; }
 // Battery voltage of both generations, as device_topology's BATTERY_VOLTAGE; charging is the status.charging attribute.
-var BATTERY_VOLTAGE = ['p0.voltage', 'p0.voltage.i0', 'logr.batteryVoltage'];
+var BATTERY_VOLTAGE = ['p0.voltage', 'logr.batteryVoltage'];
 var LINK_KEYS = ['rssi', 'snr', 'p0.percent'].concat(BATTERY_VOLTAGE);
 
 function parseJson(v) {

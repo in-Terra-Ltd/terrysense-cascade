@@ -41,11 +41,11 @@
  *   fetchDeviceDefaults(profile)    -> {entityType:'ASSET', id, name} | null
  *   fetchProfileDevices(profile)    -> [device]       the devices of one profile
  *
- * For the names of a LOGR's sources (`effective.sourceNames`, and the device
+ * For the names of a device's sources (`effective.sourceNames`, and the device
  * labels in `effective.messageLabels`):
  *
  *   fetchDevice(id)                 -> {entityType:'DEVICE', id, name, kind} | null
- *   fetchClientAttrs(entity)        -> {key: value}   CLIENT_SCOPE attributes (the topology)
+ *   fetchClientAttrs(entity)        -> {key: value}   CLIENT_SCOPE attributes (a LOGR's topology)
  *
  * `entity` / level objects carry `{entityType, id, name, kind}` — `kind` is
  * the ThingsBoard asset *type* string ("Station", "Project", "Defaults", …),
@@ -722,14 +722,25 @@ function deviceChannels(chain, io, cache) {
 
 // -- source names (ALARMING.md §4) -------------------------------------------
 
-/** `{sourceKey: name}` of a LOGR3 or LOGR4: the catalog `defaultName` of every
- * measure of every peripheral its `topology.p<POS>.type` reports, position 0
- * being its own board (`logr4` -> `logr-4`), which the TOPOLOGY report does not
- * list. Keys as the decoder builds them; only names the instance knows. Mirrors
- * `source_names()` in config_resolver.py. */
-function sourceNames(device, clientAttrs, peripherals, names) {
-  var board = /^logr(\d)$/.exec(String((device && device.kind) || ''));
-  if (!board) { return {}; }
+var LOGR_BOARD = /^logr([34])$/;
+
+/** `{sourceKey: name}` of a device; only names the instance knows. A LOGR3 or
+ * LOGR4: the catalog `defaultName` of every measure of every peripheral its
+ * `topology.p<POS>.type` reports, position 0 being its own board (`logr4` ->
+ * `logr-4`), which the TOPOLOGY report does not list; keys as the decoder
+ * builds them. Any other device: each `configured` source key, named by the key
+ * itself or by its part after the first dot (`logr.batteryVoltage` ->
+ * `batteryVoltage`). Mirrors `source_names()` in config_resolver.py. */
+function sourceNames(device, clientAttrs, peripherals, names, configured) {
+  var board = LOGR_BOARD.exec(String((device && device.kind) || ''));
+  if (!board) {
+    var named = {};
+    (configured || []).slice().sort().forEach(function (key) {
+      var name = String(key).split('.').slice(1).join('.') || String(key);
+      if (Object.prototype.hasOwnProperty.call(names || {}, name)) { named[key] = name; }
+    });
+    return named;
+  }
   var types = { 0: 'logr-' + board[1] };
   Object.keys(clientAttrs || {}).forEach(function (k) {
     var m = /^topology\.p(\d+)\.type$/.exec(k);
@@ -746,15 +757,16 @@ function sourceNames(device, clientAttrs, peripherals, names) {
   return out;
 }
 
-/** A LOGR's `effective.sourceNames`, and the dictionary label of each configured
+/** A device's `effective.sourceNames`, and the dictionary label of each configured
  * source key that resolves no label of its own. Mirrors `_resolve_source_names`. */
 function sourceNameEntries(device, keys, channelEntries, io, cache) {
-  if (!io.fetchClientAttrs) { return Promise.resolve([]); }
-  return Promise.all([clientAttrsOf(device, io, cache), defaultsJson('peripherals', io, cache), channelNamesOf(io, cache)]).then(function (got) {
-    var names = got[2], found = sourceNames(device, got[0], got[1], names);
+  var logr = LOGR_BOARD.test(String(device.kind || ''));
+  if (logr && !io.fetchClientAttrs) { return Promise.resolve([]); }
+  return Promise.all([logr ? clientAttrsOf(device, io, cache) : {}, defaultsJson('peripherals', io, cache), channelNamesOf(io, cache)]).then(function (got) {
+    var names = got[2], found = sourceNames(device, got[0], got[1], names, Object.keys(keys));
     if (!Object.keys(found).length) { return []; }
-    var out = [{ effectiveKey: EFFECTIVE_PREFIX + 'sourceNames', overrideKey: CONFIG_PREFIX + 'peripherals',
-      value: found, source: 'Topology · peripheral catalog', level: null }];
+    var out = [{ effectiveKey: EFFECTIVE_PREFIX + 'sourceNames', overrideKey: CONFIG_PREFIX + (logr ? 'peripherals' : 'channelNames'),
+      value: found, source: logr ? 'Topology · peripheral catalog' : 'Configured source keys · channel names', level: null }];
     var produced = {};
     channelEntries.forEach(function (e) { produced[e.effectiveKey] = true; });
     Object.keys(keys).forEach(function (key) {
@@ -772,7 +784,7 @@ function sourceNameEntries(device, keys, channelEntries, io, cache) {
  * language: what a device alarm's `${alarmLabel}` shows. A label a level sets
  * stays as typed. Mirrors `_device_labels` in config_resolver.py. */
 function deviceLabels(chain, stationAttrs, scalarEntries, io, cache) {
-  if (!io.fetchDevice || !io.fetchClientAttrs) { return Promise.resolve({}); }
+  if (!io.fetchDevice) { return Promise.resolve({}); }
   var lang = scalarEntries.filter(function (e) { return e.effectiveKey === EFFECTIVE_PREFIX + 'language'; })[0];
   var language = lang ? String(lang.value) : null;
   var ids = mapDevices(mapEntries(stationAttrs && stationAttrs[CONFIG_PREFIX + 'channelMap']));
@@ -782,8 +794,14 @@ function deviceLabels(chain, stationAttrs, scalarEntries, io, cache) {
     return ids.reduce(function (work, id) {
       return work.then(function () { return Promise.resolve(io.fetchDevice(id)); }).then(function (device) {
         if (!device) { return null; }
-        return clientAttrsOf(device, io, cache).then(function (client) {
-          var found = sourceNames(device, client, peripherals, names);
+        var logr = LOGR_BOARD.test(String(device.kind || ''));
+        if (logr && !io.fetchClientAttrs) { return null; }
+        var sources = logr
+          ? clientAttrsOf(device, io, cache).then(function (client) { return sourceNames(device, client, peripherals, names); })
+          : buildChain(device, io).then(function (own) { return deviceChannels(own, io, cache); }).then(function (keys) {
+            return sourceNames(device, {}, peripherals, names, Object.keys(keys));
+          });
+        return sources.then(function (found) {
           return Object.keys(found).reduce(function (inner, key) {
             return inner.then(function () {
               var name = found[key];
