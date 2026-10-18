@@ -1,7 +1,9 @@
 /*
  * Station — one station as a data flow: each device that feeds it, the
  * measurements the device provides, the channel each is stored under, and the
- * station's latest value of each; then the calculated channels, each from the
+ * station's latest value of each, by label; source and channel keys behind
+ * *Show keys*, a switch for a user who may write the station, remembered per
+ * user, and in each node's tooltip; then the calculated channels, each from the
  * station channels and the `calc.*` settings it reads (vocabulary.md §4), with the channels gone stale; the project
  * the station stands in above. A device opens its device view. A user who may
  * write the station changes the channel a measurement is stored under, or its
@@ -79,6 +81,7 @@ function worst(severities) {
 
 // -- data -------------------------------------------------------------------------------
 
+var memo = window.TerrySenseDisclosure('station');
 var state = {
   station: null, attrs: {}, entries: {}, names: {}, kinds: {}, peripherals: {}, calcAttributes: {}, waiting: [],
   channels: [], alarms: [], devices: [], chain: [], showDiagnostic: false, loadedAt: 0,
@@ -374,9 +377,17 @@ function alarmActions(a) {
 function renderChannels() {
   mainEl.innerHTML = '';
   renderPlace();
-  var sec = mainEl.appendChild(h('<div class="ts-section ts-flow"><div class="ts-section-head">' + esc(t('station.dataFlow', 'Data flow')) + '</div>' +
+  var keys = showKeys();
+  var sec = mainEl.appendChild(h('<div class="ts-section ts-flow"><div class="ts-section-head"><span>' + esc(t('station.dataFlow', 'Data flow')) + '</span></div>' +
     '<div class="ts-flow-cols"><span>' + esc(t('common.device', 'Device')) + '</span><span></span><span>' + esc(t('common.measurement', 'Measurement')) +
     '</span><span></span><span>' + esc(t('station.colChannel', 'Channel')) + '</span><span></span><span>' + esc(t('station.colValue', 'Station value')) + '</span></div></div>'));
+  sec.classList.toggle('keys', keys);
+  if (state.canWrite) {
+    var sw = sec.firstChild.appendChild(h('<label class="ts-switch ts-flow-keys"><input type="checkbox" data-a="show-keys"><span></span></label>'));
+    sw.querySelector('span').textContent = t('station.showKeys', 'Show keys');
+    sw.querySelector('input').checked = keys;
+    sw.querySelector('input').addEventListener('change', function (e) { memo.set('keys', e.target.checked); renderChannels(); });
+  }
   var lanes = flowLanes(), hidden = 0;
   lanes.forEach(function (lane) {
     var shown = lane.items.filter(function (it) { return state.showDiagnostic || !folded(it); });
@@ -420,6 +431,9 @@ function renderChannels() {
     });
   }
 }
+
+/** Source and channel keys in the flow: a writer's choice, remembered; a reader finds them in the tooltips. */
+function showKeys() { return state.canWrite && memo.get('keys'); }
 
 /** The channels in the order the flow draws them. */
 function flowOrder(lanes) {
@@ -564,7 +578,7 @@ function flowRow(device, it) {
   meas.title = it.key || '';
   meas.querySelector('.ts-flow-name').textContent = r ? r.label : measurement(c);
   var raw = device && it.key && device.model.latest[it.key];
-  meas.querySelector('.ts-row-meta').textContent = [r ? r.groupLabel : '', it.key,
+  meas.querySelector('.ts-row-meta').textContent = [r ? r.groupLabel : '', showKeys() ? it.key : '',
     raw ? fmtRaw(raw.value) + (r && r.unit ? ' ' + r.unit : '') : ''].filter(Boolean).join(' · ');
   var ch = el.querySelector('.ts-flow-ch'), val = el.querySelector('.ts-flow-val');
   var editable = state.canWrite && device && r && !M.DRYC_KEY.test(it.key);
@@ -576,8 +590,9 @@ function flowRow(device, it) {
     val.appendChild(h('<span class="ts-row-meta"></span>')).textContent = t('common.notStored', 'not stored');
   } else {
     el.dataset.channel = c.name;
+    ch.title = c.name;
     ch.appendChild(h('<div class="ts-flow-name"></div>')).textContent = c.label;
-    ch.appendChild(h('<div class="ts-mono"></div>')).textContent = c.name;
+    if (showKeys()) { ch.appendChild(h('<div class="ts-mono"></div>')).textContent = c.name; }
     valueNode(el, val, c);
     deleteButton(ch, c);
   }
@@ -609,8 +624,9 @@ function calcRow(it) {
   });
   meas.querySelector('.ts-row-meta').textContent = settings.join(' · ');
   var ch = el.querySelector('.ts-flow-ch'), val = el.querySelector('.ts-flow-val');
+  ch.title = it.name;
   ch.appendChild(h('<div class="ts-flow-name"></div>')).textContent = c.label;
-  ch.appendChild(h('<div class="ts-mono"></div>')).textContent = it.name;
+  if (showKeys()) { ch.appendChild(h('<div class="ts-mono"></div>')).textContent = it.name; }
   if (needs.length) {
     el.classList.add('off');
     ch.classList.add('empty');
@@ -1015,6 +1031,7 @@ tb.boundDatasource().then(function (ds) {
     if (got[0].kind !== 'Station') { fail(t('station.notStation', 'This widget shows a station; {name} is a {kind}.', { name: got[0].name, kind: got[0].kind })); return null; }
     state.station = got[0];
     state.owner = got[2].ownerId;
+    memo.user(got[3] && got[3].id && got[3].id.id);
     return tb.canWrite(state.station).then(function (w) {
       state.canWrite = w && !(got[3] || {}).isPublic && !tb.isPublicView();
       var perms = ctx.$scope.$injector.get(ctx.servicesMap.get('userPermissionsService'));
