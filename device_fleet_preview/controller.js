@@ -340,8 +340,8 @@ var cardEl = h(
   '      <button type="button" data-v="attention">' + esc(t('fleet.needsLook', 'Needs a look')) + '</button>' +
   '      <button type="button" data-v="outofservice">' + esc(t('common.outOfService', 'Out of service')) + '</button></div>' +
   '    <label class="ts-fleet-search">' + ICON.search + '<input type="search" placeholder="' + esc(t('fleet.search', 'Name, label, customer, project, station, sensor')) + '"></label>' +
-  '    <button type="button" class="ts-btn sm ts-fleet-filterbtn" data-a="filter"></button><span class="ts-fleet-active"></span>' +
-  '    <span class="ts-spacer"></span><button type="button" class="ts-btn sm ts-fleet-colsbtn" data-a="columns"></button>' +
+  '    <button type="button" class="ts-btn sm ts-fleet-filterbtn" data-a="filter">' + esc(t('fleet.filter', 'Filter')) + '</button><span class="ts-fleet-active"></span>' +
+  '    <span class="ts-spacer"></span><button type="button" class="ts-btn sm ts-fleet-colsbtn" data-a="columns">' + esc(t('fleet.moreColumns', 'More columns')) + '</button>' +
   '  </div>' +
   '  <div class="ts-fleet-filter" hidden>' +
   '  <div class="ts-fleet-tags" data-kind="project" hidden><span class="ts-row-meta">' + esc(t('common.projects', 'Projects')) + '</span><span class="ts-fleet-taglist"></span></div>' +
@@ -404,7 +404,6 @@ function renderTags() {
   fb.innerHTML = ICON.chev + '<span></span>';
   fb.lastChild.textContent = picked ? t('fleet.filterCount', 'Filter · {n}', { n: picked }) : t('fleet.filter', 'Filter');
   fb.classList.toggle('on', !filterEl.hidden);
-  cardEl.querySelector('[data-a=columns]').textContent = t('fleet.moreColumns', 'More columns');
   Object.keys(TAGS).forEach(function (kind) {
     var line = cardEl.querySelector('.ts-fleet-tags[data-kind="' + kind + '"]');
     var all = {};
