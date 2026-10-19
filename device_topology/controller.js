@@ -78,7 +78,6 @@ var UNKNOWN = 'unknown';
 function sdStates() { return { ready: t('device.sdReady', 'ready'), fault: t('device.sdFault', 'fault'), not_inserted: t('device.sdNoCard', 'no card') }; }
 var NEW_STATION = '__new';
 // A source is silent past this many of its intervals (HEALTH.md §2).
-var SILENT_INTERVALS = 3;
 var NOT_READINGS = M.NOT_READINGS, RULE_SOURCE = M.RULE_SOURCE, DRYC_KEY = M.DRYC_KEY, LOGR2_SENSORS = M.LOGR2_SENSORS;
 function register() {
   return [
@@ -490,7 +489,9 @@ function bindDrawer(binding, preset) {
   dr.el.classList.add('wide');
   var picked = binding ? binding.station : null;
   var pickedEntries = binding ? binding.entries : null;
-  var rows = mappable();
+  var stored = binding ? mineOf(binding.entries) : {};
+  // A reading an earlier peripheral left is offered only where the station already stores it, to take it off.
+  var rows = mappable().filter(function (r) { return !r.earlier || Object.keys(stored).some(function (c) { return stored[c] === r.key; }); });
   var body = dr.body;
 
   var stationField = h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('common.station', 'Station')) + '</span></div><div class="ts-ctl"></div><div class="ts-field-hint" data-f="hint"></div></div>');
@@ -816,10 +817,9 @@ function sensorKeys(part) {
   });
 }
 
-/** A LOGR2 sensor no longer used: delete its readings on the device, and take
- * its channels off the stations the user may write. Station history stays. */
-function deleteSensorData(part) {
-  var keys = sensorKeys(part);
+/** A LOGR2 sensor no longer used, or an earlier peripheral's readings: delete them on the
+ * device, and take their channels off the stations the user may write. Station history stays. */
+function deleteData(label, keys) {
   var fed = [];
   state.bindings.forEach(function (b) {
     var channels = mineOf(b.entries);
@@ -827,7 +827,7 @@ function deleteSensorData(part) {
     if (gone.length && b.writable) { fed.push({ binding: b, gone: gone }); }
   });
   var text = t('device.confirmDeleteData', 'Delete the data of the {part} on {device}? Its {n} measurements and their history on the device are deleted.',
-      { part: '<b>' + esc(part.label) + '</b>', device: deviceName(), n: keys.length }) +
+      { part: '<b>' + esc(label) + '</b>', device: deviceName(), n: keys.length }) +
     (fed.length ? t('device.deleteDataChannels', ' These station channels stop receiving values and keep their history:') + ' <ul>' + fed.map(function (f) {
       return '<li>' + esc(f.binding.station.name) + ' · ' + f.gone.map(esc).join(', ') + '</li>';
     }).join('') + '</ul>' : '') +
@@ -844,7 +844,7 @@ function deleteSensorData(part) {
     }).then(function () {
       return fed.length ? tb.resolveStations(fed.map(function (f) { return f.binding.station; })) : null;
     }).then(function () {
-      ui.toast(t('device.dataDeleted', '{part} data deleted', { part: part.label }));
+      ui.toast(t('device.dataDeleted', '{part} data deleted', { part: label }));
       return refresh();
     }).catch(function (err) { ui.toast(t('common.notDeleted', 'Not deleted: {error}', { error: errText(err) }), 'error'); });
   });
@@ -1120,11 +1120,8 @@ function followUpCard() {
  * both are listed, else by the kinds it measures: `[{from, to, since}]`. */
 function sourceTs(s) { return (state.latest[s.sourceKey] || {}).ts || 0; }
 function newestTs(list) { return Math.max.apply(null, list.map(sourceTs)); }
-/** No reading for SILENT_INTERVALS of its interval, or of the base interval when it has none. */
-function silentSource(s) {
-  var iv = Number(s.interval) || Number(state.client['status.baseIntervalSeconds']) || 0;
-  return !!iv && Date.now() - sourceTs(s) > SILENT_INTERVALS * iv * 1000;
-}
+/** No reading for three of its intervals (mapping.js). */
+function silentSource(s) { return M.silent(model(), s); }
 
 function busMoves(nodes, srcs) {
   var byPos = {}, moves = [];
@@ -1706,8 +1703,10 @@ function stateChip(row, cls, text, st) {
 }
 
 /** Where a measurement is stored: each station channel it feeds; for a writer the way to change it. */
-function storeCell(row, key, diagnostic) {
+function storeCell(row, key, diagnostic, earlier) {
   var feeds = state.wiring[key] || [], r = state.writable && storable[key];
+  // An earlier peripheral's reading can only leave the stations that store it.
+  if (earlier && !feeds.length) { r = null; }
   var cell = row.querySelector('.ts-mc-store');
   var wire = cell.appendChild(h('<div class="ts-wire"></div>'));
   if (feeds.length) {
@@ -1731,7 +1730,7 @@ function storeCell(row, key, diagnostic) {
     if (feeds.length) { b.title = t('common.stations', 'Stations'); } else { b.textContent = t('device.storeOnStation', 'Store on a station…'); }
     b.addEventListener('click', function () { storeDrawer(r); });
   }
-  return !diagnostic && !feeds.length;
+  return !diagnostic && !earlier && !feeds.length;
 }
 
 /** A source's row: its state from its latest readings, its subscription, its wiring. */
@@ -1809,7 +1808,9 @@ function logrNode() {
 }
 
 function positionGroup(pos, node, srcs, removed) {
-  var own = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
+  var here = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
+  var earlier = removed ? [] : here.filter(function (s) { return M.fromEarlier(model(), s, node); });
+  var own = here.filter(function (s) { return earlier.indexOf(s) < 0; });
   var g = group('p' + pos, pos === 0);
   g.el.dataset.position = pos;
   g.num(pos);
@@ -1856,7 +1857,51 @@ function positionGroup(pos, node, srcs, removed) {
   } else if (!removed && !dryc && own.length) {
     g.sum(unstored ? (unstored === 1 ? t('device.notStoredOne', '1 not stored') : t('device.notStoredMany', '{n} not stored', { n: unstored })) : t('device.allStoredShort', 'all stored'));
   }
+  if (earlier.length) {
+    var inner = earlierGroup(pos, earlier);
+    if (inner.rows.some(function (r) { return r.attention; })) { g.flag('warn', t('device.earlierStored', 'earlier readings still stored')); }
+    g.el.appendChild(inner.el);
+    inner.rows.forEach(function (r) { g.rows.push(r); });
+  }
   return g;
+}
+
+/** What an earlier peripheral at the position left behind (DEVICE_VIEW.md §2 *Sources*), folded unless a station still stores it. */
+function earlierGroup(pos, list) {
+  var stored = list.some(function (s) { return (state.wiring[s.sourceKey] || []).length; });
+  var g = group('p' + pos + '.earlier', !stored);
+  g.el.classList.add('inner');
+  g.el.dataset.earlier = list.length;
+  g.num(null);
+  g.name(t('device.earlierReadings', 'Earlier readings at this position'));
+  var last = newestTs(list);
+  g.mono(last ? t('device.lastReading', 'last reading {when}', { when: ui.when(last) }) : '');
+  g.sum(String(list.length));
+  if (state.writable) {
+    g.act('<button type="button" class="ts-btn danger sm" data-a="delete-earlier">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () {
+      var keys = [];
+      list.forEach(function (s) { [s.sourceKey, s.sourceKey + '.status'].forEach(function (k) { if (state.latest[k]) { keys.push(k); } }); });
+      deleteData(t('device.earlierPeripheral', 'earlier peripheral at position {pos}', { pos: pos }), keys);
+    });
+  }
+  list.forEach(function (s) { g.add(earlierRow(s)); });
+  return g;
+}
+
+/** A reading an earlier peripheral left: its last value, and the stations that still store it. */
+function earlierRow(s) {
+  var v = state.latest[s.sourceKey], row = mrow(true);
+  row.dataset.source = s.sourceKey;
+  row.dataset.state = 'earlier';
+  row.querySelector('.ts-row-label').textContent = sourceLabel(s, null);
+  nameSub(row, s.sourceKey, 'ts-mono');
+  latestCell(row, v ? fmtValue(v.value) : '—', v ? unitOf(s) : '', v ? t.ago(v.ts) : '');
+  stateChip(row, '', t('device.earlierChip', 'Earlier'), 'earlier');
+  if (state.faults[s.sourceKey]) {
+    row.querySelector('.ts-mc-state').appendChild(h('<span class="ts-chip fault" data-alarm="1">' + ICON.bell + '</span>')).title = t('device.faultAlarmTip', 'Active peripheralFault alarm');
+  }
+  storeCell(row, s.sourceKey, false, true);
+  return { el: row, attention: !!(state.wiring[s.sourceKey] || []).length, unstored: false };
 }
 
 /** Removed positions whose readings have all gone silent, folded out of the way. */
@@ -1994,7 +2039,7 @@ function partGroup(part, logr2, address) {
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
   g.mono(logr2 && !logger ? part.id + '.' : '');
   if (LOGR2_SENSORS[part.id] && state.writable) {
-    g.act('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteSensorData(part); });
+    g.act('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteData(part.label, sensorKeys(part)); });
   }
   if (part.id === 'dryc') { g.add(drycRow('dryc.', null, false)); return g; }
   part.keys.slice().sort(function (a, b) { return labelOf(a).localeCompare(labelOf(b)); })
