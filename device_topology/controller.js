@@ -1786,7 +1786,7 @@ function readingRow(key, diagnostic, bus) {
 
 // -- bus groups ---------------------------------------------------------------------------
 
-/** The positions in bus order, a removed one after the live ones, then the LOGR itself and the former positions, folded. */
+/** The LOGR itself, then the positions in bus order, a removed one after the live ones, then the former positions, folded. */
 function busGroups(banners) {
   var nodes = topology(), srcs = sources(), out = [];
   var positions = {};
@@ -1796,13 +1796,13 @@ function busGroups(banners) {
   busMoves(nodes, srcs).forEach(function (m) { banners.appendChild(moveBanner(m)); });
   // A complete TOPOLOGY report leaves out a removed position (TRX_NANO.md §1.3); before any, absence says nothing.
   var reported = state.client['topology.frame'] !== undefined, removed = [], former = [];
+  out.push(positionGroup(0, nodes[0] || logrNode(), srcs));
   Object.keys(positions).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) {
     if (nodes[pos] || !reported) { out.push(positionGroup(pos, nodes[pos], srcs)); return; }
     var own = srcs.filter(function (s) { return s.position === pos; });
     (own.length && own.every(silentSource) ? former : removed).push(pos);
   });
   removed.forEach(function (pos) { out.push(positionGroup(pos, null, srcs, true)); });
-  out.push(positionGroup(0, nodes[0] || logrNode(), srcs));
   if (former.length) { out.push(formerGroup(former, srcs)); }
   return out;
 }
@@ -1978,15 +1978,15 @@ function drycLink(container) {
 
 // -- LOGR2 and other devices ---------------------------------------------------------------
 
-/** A LOGR2's sensors by key prefix, its own readings folded last; any other device's readings in one group. */
+/** A LOGR2's own readings first, folded, then its sensors by key prefix; any other device's readings in one group. */
 function partGroups() {
   var fam = family(), keys = readings(), out = [];
   var parts = fam === 'logr2' ? logr2Parts(keys) : [{ id: 'device', label: state.device.type || t('common.device', 'Device'), keys: keys }];
+  var logger = parts[0];
+  if (fam === 'logr2' && logger.id === 'logr' && logger.keys.length) { out.push(partGroup(logger, true)); }
   parts.forEach(function (part) {
     if (part.keys.length && part.id !== 'logr') { out.push(partGroup(part, fam === 'logr2')); }
   });
-  var logger = parts[0];
-  if (fam === 'logr2' && logger.id === 'logr' && logger.keys.length) { out.push(partGroup(logger, true)); }
   return out;
 }
 
