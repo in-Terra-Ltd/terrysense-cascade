@@ -2621,7 +2621,7 @@ function txGap(uplink) {
     if (send === 'events_daily') { daily = true; }
   });
   var d = lo ? uplink * Math.ceil(lo / uplink) : daily ? 86400 : null;
-  var lc = Number(c['status.linkCheckIntervalSeconds']) > 0 ? Number(c['status.linkCheckIntervalSeconds']) : 0;
+  var lc = Number(c['status.linkCheckIntervalSeconds']) > 0 ? uplink * Math.ceil(Number(c['status.linkCheckIntervalSeconds']) / uplink) : 0;
   return { s: d === null ? (lc || null) : (lc ? Math.min(d, lc) : d), data: lo ? d : null };
 }
 
