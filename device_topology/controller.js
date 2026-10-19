@@ -1639,17 +1639,13 @@ function measurementsSection() {
   return sec;
 }
 
-/** A group of rows under a header: a position, a LOGR2 sensor, a device's readings. Folded groups are `<details>`. */
+/** A group of rows under a header that folds: a position, a LOGR2 sensor, a device's readings; `folded` closes it at first. */
 function group(id, folded) {
-  var el = folded
-    ? h('<details class="ts-mgroup fold"><summary class="ts-mgroup-head"></summary></details>')
-    : h('<div class="ts-mgroup"><div class="ts-mgroup-head"></div></div>');
-  if (folded) {
-    el.open = !!state.open[id];
-    el.addEventListener('toggle', function () { state.open[id] = el.open; });
-  }
+  var el = h('<details class="ts-mgroup fold"><summary class="ts-mgroup-head"></summary></details>');
+  el.open = state.open[id] === undefined ? !folded : state.open[id];
+  el.addEventListener('toggle', function () { state.open[id] = el.open; });
   var head = el.querySelector('.ts-mgroup-head');
-  head.innerHTML = (folded ? '<span class="ts-pos-chev">' + ICON.chev + '</span>' : '') +
+  head.innerHTML = '<span class="ts-pos-chev">' + ICON.chev + '</span>' +
     '<span class="ts-pos-num"></span><span class="ts-mgroup-name"></span><span class="ts-mono"></span><span class="ts-pos-flags"></span>' +
     '<span class="ts-spacer"></span><span class="ts-mgroup-sum"></span><span class="ts-mgroup-acts"></span>';
   function flag(cls, text, attr) {
@@ -1978,25 +1974,25 @@ function drycLink(container) {
 
 // -- LOGR2 and other devices ---------------------------------------------------------------
 
-/** A LOGR2's own readings first, folded, then its sensors by key prefix; any other device's readings in one group. */
+/** A LOGR2's own readings first, folded, then its sensors by key prefix at addresses 1, 2; any other device's readings in one group. */
 function partGroups() {
-  var fam = family(), keys = readings(), out = [];
+  var fam = family(), keys = readings(), out = [], address = 0;
   var parts = fam === 'logr2' ? logr2Parts(keys) : [{ id: 'device', label: state.device.type || t('common.device', 'Device'), keys: keys }];
   var logger = parts[0];
   if (fam === 'logr2' && logger.id === 'logr' && logger.keys.length) { out.push(partGroup(logger, true)); }
   parts.forEach(function (part) {
-    if (part.keys.length && part.id !== 'logr') { out.push(partGroup(part, fam === 'logr2')); }
+    if (part.keys.length && part.id !== 'logr') { out.push(partGroup(part, fam === 'logr2', ++address)); }
   });
   return out;
 }
 
-function partGroup(part, logr2) {
+function partGroup(part, logr2, address) {
   var logger = part.id === 'logr';
   var g = group('part.' + part.id, logger);
   g.el.dataset.part = part.id;
-  g.num(logr2 && !logger ? part.id : logger ? 0 : null, logr2 && !logger ? 'prefix' : null);
+  g.num(logger ? 0 : logr2 ? address : null);
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
-  g.mono('');
+  g.mono(logr2 && !logger ? part.id + '.' : '');
   if (LOGR2_SENSORS[part.id] && state.writable) {
     g.act('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteSensorData(part); });
   }
