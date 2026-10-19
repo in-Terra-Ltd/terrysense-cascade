@@ -2474,6 +2474,28 @@ function commandsCard() {
 var MIN_UPLINK_S = 60, UPLINK_STEP_S = 5;
 function maxUplinkS() { return Number(state.client.wireVersion) === 3 ? 65535 * UPLINK_STEP_S : 65535; }
 
+/** The longest gap between transmissions in s, from the subscriptions the device reports
+ * (TRX_NANO.md §12.0); null when it has no bound. The ingest chain computes the same for
+ * the inactivity timeout (HEALTH.md §1). */
+function txGapS(uplink) {
+  var subs = {}, c = state.client;
+  Object.keys(c).forEach(function (key) {
+    var m = /^subscriptions\.(.+)\.(interval|enabled|send)$/.exec(key);
+    if (m) { (subs[m[1]] = subs[m[1]] || {})[m[2]] = c[key]; }
+  });
+  var lo = 0, daily = false, events = false;
+  Object.keys(subs).forEach(function (k) {
+    var x = subs[k], iv = Number(x.interval), send = x.send || 'all';
+    if (x.enabled === false || x.enabled === 'false') { return; }
+    if (send === 'all' && iv > 0 && (!lo || iv < lo)) { lo = iv; }
+    if (send === 'events_daily') { daily = true; }
+    if (send === 'events') { events = true; }
+  });
+  if (lo) { return uplink * Math.ceil(lo / uplink); }
+  if (daily) { return 86400; }
+  return events ? null : uplink;
+}
+
 /** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
  * `SET_INTERVAL` on the whole device (DEVICE_VIEW.md §2, Commands). Minutes and hours only:
  * nothing under the device's uplink floor is offered. */
@@ -2481,7 +2503,7 @@ function uplinkControl(current) {
   var el = h('<div class="ts-uplink-set"><span class="ts-tsrc-every"><span class="ts-uplink-label"></span>' +
     ' <input class="ts-input num sm" type="number" min="1" step="1" inputmode="numeric"><select class="ts-select sm"></select>' +
     '<button type="button" class="ts-btn primary sm" data-a="uplink-interval" hidden>' + esc(t('device.set', 'Set')) + '</button></span></div>');
-  el.querySelector('.ts-uplink-label').textContent = t('device.uplinkEveryLabel', 'Uplink every');
+  el.querySelector('.ts-uplink-label').textContent = t('device.sendCollectedEvery', 'Send collected readings every');
   var input = el.querySelector('input'), unit = el.querySelector('select'), setBtn = el.querySelector('button');
   // A current value of whole seconds keeps the seconds unit so it shows as it is.
   var u = current ? unitFor(current) : null;
@@ -2505,6 +2527,24 @@ function uplinkControl(current) {
   function changed() { setBtn.hidden = !input.value || seconds() === current; }
   input.addEventListener('input', changed);
   unit.addEventListener('change', changed);
+  // Readings slower than the uplink: the logger transmits at their pace, not at each uplink.
+  var gap = current ? txGapS(current) : null;
+  if (gap !== null && gap > current) {
+    var note = el.appendChild(h('<div class="ts-uplink-gap"><span></span></div>'));
+    note.firstChild.textContent = t('device.transmitsEvery', 'Transmits every {d}: no measurement is read more often', { d: fmtDuration(gap) });
+    var offer = Math.ceil(gap / UPLINK_STEP_S) * UPLINK_STEP_S;
+    if (offer <= maxUplinkS() && offer <= 65535 * UPLINK_STEP_S) {
+      var hint = note.appendChild(h('<button type="button" class="ts-btn sm" data-a="uplink-gap"></button>'));
+      hint.textContent = t('device.setUplinkToGap', 'Set the uplink interval to {d}', { d: fmtDuration(offer) });
+      hint.addEventListener('click', function () {
+        var u2 = unitFor(offer);
+        if (!unit.querySelector('option[value="' + u2.s + '"]')) { u2 = UNITS[1]; }
+        unit.value = u2.s;
+        input.value = offer / u2.s;
+        changed();
+      });
+    }
+  }
   setBtn.addEventListener('click', function () {
     var v = seconds();
     if (!(v >= MIN_UPLINK_S && v <= maxUplinkS() && v % UPLINK_STEP_S === 0)) {
