@@ -356,15 +356,21 @@ function uplinkNote(commands) {
   return note;
 }
 
-/** `note`, when given, follows the list of commands. */
-function send(commands, note) {
+/** `note`, when given, follows the list of commands. With `choice` ({label, checked}) the
+ * confirmation carries that switch, and `commands` and `note` are functions of it. */
+function send(commands, note, choice) {
   var queued = pending();
   var n = queued ? queued.commands.length : 0;
-  return ui.confirm(t('device.sendTo', 'Send to {device}?', { device: deviceName() }) + listOf(commands) + (note ? note + ' ' : '') +
-    (n === 1 ? t('device.queueJoinOne', 'It joins the 1 queued change; the whole set goes out after the device’s next uplink.')
-       : n ? t('device.queueJoinMany', 'It joins the {n} queued changes; the whole set goes out after the device’s next uplink.', { n: n })
-       : t('device.deliveredNext', 'It is delivered after the device’s next uplink.')) + uplinkNote(commands), t('common.send', 'Send')).then(function (ok) {
-    return ok ? request({ commands: commands }, t('device.queued', 'Queued: delivered after the next uplink')) : false;
+  var cmds = function (on) { return choice ? commands(on) : commands; };
+  var html = function (on) {
+    var nt = choice ? note(on) : note;
+    return t('device.sendTo', 'Send to {device}?', { device: deviceName() }) + listOf(cmds(on)) + (nt ? nt + ' ' : '') +
+      (n === 1 ? t('device.queueJoinOne', 'It joins the 1 queued change; the whole set goes out after the device’s next uplink.')
+         : n ? t('device.queueJoinMany', 'It joins the {n} queued changes; the whole set goes out after the device’s next uplink.', { n: n })
+         : t('device.deliveredNext', 'It is delivered after the device’s next uplink.')) + uplinkNote(cmds(on));
+  };
+  return ui.confirm(choice ? html : html(false), t('common.send', 'Send'), choice).then(function (ok) {
+    return ok ? request({ commands: cmds(!!(choice && choice.checked)) }, t('device.queued', 'Queued: delivered after the next uplink')) : false;
   });
 }
 
@@ -2152,6 +2158,46 @@ function unitFor(sec) {
   return UNITS.slice().reverse().filter(function (u) { return sec >= u.s && sec % u.s === 0; })[0] || UNITS[0];
 }
 
+// Source intervals against the uplink interval (measurement/home.md, measurement and uplink intervals).
+var MAX_INTERVAL_S = 65535;
+function uplinkS() { return Number(state.client['status.baseIntervalSeconds']) || 0; }
+/** n when `sec` is n whole uplink intervals, else 0. */
+function uplinksIn(sec, uplink) { sec = Number(sec); return uplink > 0 && sec > 0 && sec % uplink === 0 ? sec / uplink : 0; }
+function everyUplinks(n) { return n === 1 ? t('device.everyUplink', 'every uplink') : t('device.everyNUplinks', 'every {n} uplinks', { n: n }); }
+/** A source interval: every n uplinks where it is a multiple of the uplink interval, else its duration. */
+function fmtInterval(sec) { var n = uplinksIn(sec, uplinkS()); return n ? everyUplinks(n) : fmtDuration(sec); }
+
+/** What an uplink interval change from `from` to `to` does to the subscriptions the device reports:
+ * the multiples of `from`, each resent as n × `to` or the largest multiple within 65535 s, and the
+ * warnings of the intervals rule on the intervals after the change, multiples kept or not. */
+function uplinkPlan(from, to, keep) {
+  var multiples = [], warnings = [];
+  sources().forEach(function (s) {
+    var iv = Number(s.interval);
+    if (!subscribed(s) || s.enabled === false || s.enabled === 'false' || !(iv > 0)) { return; }
+    var sec = iv, n = uplinksIn(iv, from);
+    if (n) {
+      var largest = Math.floor(MAX_INTERVAL_S / to);
+      if (n * to > MAX_INTERVAL_S) {
+        warnings.push(largest ? t('device.multipleTooLong', '{source}: every {n} uplinks would be over 65535 s; every {m} uplinks instead, or keep the seconds.', { source: s.sourceKey, n: n, m: largest })
+          : t('device.multipleKeepsSeconds', '{source}: every {n} uplinks would be over 65535 s; it keeps every {d}.', { source: s.sourceKey, n: n, d: fmtDuration(iv) }));
+      }
+      if (largest) {
+        var m = { source: s, n: Math.min(n, largest), seconds: Math.min(n, largest) * to };
+        multiples.push(m);
+        if (keep) { sec = m.seconds; }
+      }
+    }
+    if (sec % to && to % sec) {
+      warnings.push(t('device.intervalDrifts', '{source}: every {d} is neither a multiple nor a divisor of the uplink interval; its readings drift against the uplinks.', { source: s.sourceKey, d: fmtDuration(sec) }));
+    }
+    if (sec < to) {
+      warnings.push(t('device.intervalSeveral', '{source}: several readings per uplink, each adding to the air time of every uplink.', { source: s.sourceKey }));
+    }
+  });
+  return { multiples: multiples, warnings: warnings };
+}
+
 /** The queued changes that target this source. */
 function queuedFor(s) {
   var queued = pending();
@@ -2182,7 +2228,8 @@ function everyText(cell, s) {
     var every = cell.appendChild(h('<span class="ts-tsrc-every"></span>'));
     if (s.enabled !== undefined) { every.dataset.enabled = String(on); }
     if (s.interval) { every.dataset.interval = s.interval; }
-    every.textContent = !on ? t('common.valueOff', 'off') : s.interval ? fmtDuration(s.interval) : '—';
+    every.textContent = !on ? t('common.valueOff', 'off') : s.interval ? fmtInterval(s.interval) : '—';
+    if (on && uplinksIn(s.interval, uplinkS())) { every.title = fmtDuration(s.interval); }
     if (s.trigger && s.trigger !== 'none') {
       var rule = cell.appendChild(h('<div class="ts-mrule"></div>'));
       rule.dataset.trigger = s.trigger;
@@ -2191,11 +2238,24 @@ function everyText(cell, s) {
   }
 }
 
+/** A source interval: a number and a unit, *uplinks* among them once the uplink interval is known,
+ * picked where the interval is a multiple of it. */
 function intervalInputs(seconds) {
   var box = h('<span class="ts-tsrc-every"><input class="ts-input num sm ts-src-int" type="number" min="1" step="1" inputmode="numeric"><select class="ts-select sm ts-src-unit"></select></span>');
-  var input = box.querySelector('input'), unit = box.querySelector('select');
+  var input = box.querySelector('input'), unit = box.querySelector('select'), uplink = uplinkS();
   UNITS.forEach(function (u) { var o = document.createElement('option'); o.value = u.s; o.textContent = u.label; unit.appendChild(o); });
-  if (seconds) {
+  if (uplink) {
+    var o = unit.appendChild(document.createElement('option'));
+    o.value = 'uplinks';
+    o.textContent = t('device.unitUplinks', 'uplinks');
+  }
+  function step() { return unit.value === 'uplinks' ? uplink : Number(unit.value); }
+  function bound() { if (unit.value === 'uplinks') { input.max = Math.floor(MAX_INTERVAL_S / uplink); } else { input.removeAttribute('max'); } }
+  var n = uplinksIn(seconds, uplink);
+  if (n) {
+    unit.value = 'uplinks';
+    input.value = n;
+  } else if (seconds) {
     var u = unitFor(seconds);
     unit.value = u.s;
     input.value = seconds / u.s;
@@ -2203,7 +2263,9 @@ function intervalInputs(seconds) {
     unit.value = 60;
     input.placeholder = '?';
   }
-  return { el: box, seconds: function () { return input.value === '' ? null : Number(input.value) * Number(unit.value); } };
+  bound();
+  unit.addEventListener('change', bound);
+  return { el: box, seconds: function () { return input.value === '' ? null : Number(input.value) * step(); } };
 }
 
 function editCell(cell, s, row, node) {
@@ -2404,7 +2466,7 @@ function addedRows(pos) {
     nameSub(row, a.sourceKey, 'ts-mono');
     row.querySelector('.ts-mc-name').appendChild(h('<div class="ts-mchange"></div>')).textContent =
       commandText({ op: 'CREATE_SUBSCRIPTION', target: a.target, interval_s: a.interval });
-    row.querySelector('.ts-mc-every').appendChild(h('<span class="ts-tsrc-every"></span>')).textContent = fmtDuration(a.interval);
+    row.querySelector('.ts-mc-every').appendChild(h('<span class="ts-tsrc-every"></span>')).textContent = fmtInterval(a.interval);
     var undo = row.querySelector('.ts-mc-every').appendChild(h('<button type="button" class="ts-icon-btn" data-a="undo-add">' + ICON.close + '</button>'));
     undo.title = t('device.undoAdd', 'Leave it out');
     undo.addEventListener('click', function () { state.adds = state.adds.filter(function (x) { return x !== a; }); render(); });
@@ -2689,9 +2751,25 @@ function uplinkControl(current) {
       ui.toast(t('device.uplinkIntervalInvalid', 'The uplink interval is a multiple of 5 seconds, 60 to {max}', { max: maxUplinkS() }), 'error');
       return;
     }
-    send([{ op: 'SET_INTERVAL', target: { mode: 'GLOBAL' }, interval_s: v }],
-      v < current ? t('device.uplinkShorter', 'A shorter uplink interval costs battery: the LOGR powers its bus and radio more often.')
-        : t('device.uplinkNote', 'Every uplink powers the LOGR’s bus and radio: the shorter the interval, the more battery it costs.'));
+    var cost = v < current ? t('device.uplinkShorter', 'A shorter uplink interval costs battery: the LOGR powers its bus and radio more often.')
+      : t('device.uplinkNote', 'Every uplink powers the LOGR’s bus and radio: the shorter the interval, the more battery it costs.');
+    var global = { op: 'SET_INTERVAL', target: { mode: 'GLOBAL' }, interval_s: v };
+    var note = function (keep) {
+      var warnings = current ? uplinkPlan(current, v, keep).warnings : [];
+      return cost + (warnings.length ? '<ul class="ts-confirm-warn">' + warnings.map(function (w) { return '<li>' + esc(w) + '</li>'; }).join('') + '</ul>' : '');
+    };
+    var tied = current ? uplinkPlan(current, v, true).multiples : [];
+    if (!tied.length) { send([global], note(false)); return; }
+    // The uplink interval first, then each kept multiple (DEVICE_VIEW.md §2, Commands).
+    var commands = function (keep) {
+      return [global].concat(!keep ? [] : tied.filter(function (m) { return m.seconds !== Number(m.source.interval); })
+        .map(function (m) { return { op: 'SET_INTERVAL', target: sourceTarget(m.source), interval_s: m.seconds }; }));
+    };
+    send(commands, note, {
+      label: t('device.keepMultiples', 'Keep the measurements sent every n uplinks tied to the uplinks: {list}', {
+        list: tied.map(function (m) { return m.source.sourceKey + ' ' + everyUplinks(m.n); }).join(', ') }),
+      checked: true
+    });
   });
   return el;
 }

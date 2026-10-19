@@ -134,13 +134,25 @@ root.TerrySenseUi = function (rootEl) {
     setTimeout(function () { el.remove(); }, kind === 'error' ? 6000 : 2600);
   }
 
-  /** Resolves true/false. `html` is trusted markup built by the caller. */
-  function confirm(html, okLabel) {
+  /** Resolves true/false. `html` is trusted markup built by the caller. With `check`
+   * ({label, checked}) the box carries a switch that keeps `check.checked`, and `html`
+   * may be a function of it, rebuilt on each toggle. */
+  function confirm(html, okLabel, check) {
     return new Promise(function (resolve) {
-      var el = h('<div class="ts-confirm"><div class="ts-confirm-box"><p></p><div class="ts-confirm-actions">' +
+      var el = h('<div class="ts-confirm"><div class="ts-confirm-box"><p></p>' +
+        (check ? '<label class="ts-switch ts-confirm-check"><input type="checkbox" data-f="check"> <span></span></label>' : '') +
+        '<div class="ts-confirm-actions">' +
         '<button type="button" class="ts-btn" data-a="no"></button><button type="button" class="ts-btn primary" data-a="yes"></button></div></div></div>');
       el.querySelector('[data-a=no]').textContent = root.TerrySenseT('common.cancel', 'Cancel');
-      el.querySelector('p').innerHTML = html;
+      var p = el.querySelector('p');
+      var fill = function () { p.innerHTML = typeof html === 'function' ? html(check ? check.checked : false) : html; };
+      fill();
+      if (check) {
+        var box = el.querySelector('[data-f=check]');
+        box.checked = !!check.checked;
+        el.querySelector('.ts-confirm-check span').textContent = check.label;
+        box.addEventListener('change', function () { check.checked = box.checked; fill(); });
+      }
       el.querySelector('[data-a=yes]').textContent = okLabel;
       el.addEventListener('click', function (e) {
         var a = e.target.getAttribute('data-a');
