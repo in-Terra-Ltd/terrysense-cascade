@@ -2602,26 +2602,27 @@ function commandsCard() {
 var MIN_UPLINK_S = 60, UPLINK_STEP_S = 5;
 function maxUplinkS() { return Number(state.client.wireVersion) === 3 ? 65535 * UPLINK_STEP_S : 65535; }
 
-/** The longest gap between transmissions in s, from the subscriptions the device reports
- * (TRX_NANO.md §12.0); null when it has no bound. The ingest chain computes the same for
- * the inactivity timeout (HEALTH.md §1). */
-function txGapS(uplink) {
+/** The longest gap between transmissions in s, from the subscriptions and the periodic
+ * link check the device reports (TRX_NANO.md §12.0): `s`, null when it has no bound, and
+ * `data`, the bound of the measurements sent every time, null without one. The ingest chain
+ * computes the same for the inactivity timeout (HEALTH.md §1). */
+function txGap(uplink) {
   var subs = {}, c = state.client;
   Object.keys(c).forEach(function (key) {
     var m = /^subscriptions\.(.+)\.(interval|enabled|send)$/.exec(key);
     if (m) { (subs[m[1]] = subs[m[1]] || {})[m[2]] = c[key]; }
   });
-  var lo = 0, daily = false, events = false;
+  if (!Object.keys(subs).length) { return { s: uplink, data: null }; }
+  var lo = 0, daily = false;
   Object.keys(subs).forEach(function (k) {
     var x = subs[k], iv = Number(x.interval), send = x.send || 'all';
     if (x.enabled === false || x.enabled === 'false') { return; }
     if (send === 'all' && iv > 0 && (!lo || iv < lo)) { lo = iv; }
     if (send === 'events_daily') { daily = true; }
-    if (send === 'events') { events = true; }
   });
-  if (lo) { return uplink * Math.ceil(lo / uplink); }
-  if (daily) { return 86400; }
-  return events ? null : uplink;
+  var d = lo ? uplink * Math.ceil(lo / uplink) : daily ? 86400 : null;
+  var lc = Number(c['status.linkCheckIntervalSeconds']) > 0 ? Number(c['status.linkCheckIntervalSeconds']) : 0;
+  return { s: d === null ? (lc || null) : (lc ? Math.min(d, lc) : d), data: lo ? d : null };
 }
 
 /** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
@@ -2656,12 +2657,12 @@ function uplinkControl(current) {
   input.addEventListener('input', changed);
   unit.addEventListener('change', changed);
   // Readings slower than the uplink: the logger transmits at their pace, not at each uplink.
-  var gap = current ? txGapS(current) : null;
+  var tx = current ? txGap(current) : { s: null, data: null }, gap = tx.s;
   if (gap !== null && gap > current) {
     var note = el.appendChild(h('<div class="ts-uplink-gap"><span></span></div>'));
     note.firstChild.textContent = t('device.transmitsEvery', 'Transmits every {d}: no measurement is read more often', { d: fmtDuration(gap) });
     var offer = Math.ceil(gap / UPLINK_STEP_S) * UPLINK_STEP_S;
-    if (offer <= maxUplinkS() && offer <= 65535 * UPLINK_STEP_S) {
+    if (tx.data !== null && tx.data > current && offer <= maxUplinkS() && offer <= 65535 * UPLINK_STEP_S) {
       var hint = note.appendChild(h('<button type="button" class="ts-btn sm" data-a="uplink-gap"></button>'));
       hint.textContent = t('device.setUplinkToGap', 'Set the uplink interval to {d}', { d: fmtDuration(offer) });
       hint.addEventListener('click', function () {
