@@ -344,6 +344,18 @@ function request(body, toast) {
   });
 }
 
+/** When the next uplink is planned, and a warning when the set leaves no measurement that makes the device transmit. */
+function uplinkNote(commands) {
+  var at = nextUplink(), uplink = Number(state.client['status.baseIntervalSeconds']);
+  var all = ((pending() || {}).commands || []).concat(commands);
+  var note = !at ? '' : ' ' + (at > Date.now() ? t('device.nextUplinkPlanned', 'Its next uplink is planned by {time}.', { time: ui.when(at) })
+    : t('device.nextUplinkLate', 'Its next uplink was due by {time}.', { time: ui.when(at) }));
+  if (uplink && txGap(uplink).data !== null && txGap(uplink, all).data === null) {
+    note += ' ' + t('device.goesQuiet', 'After these changes no measurement makes it transmit; it transmits at least once a day: the link check. A later change waits up to a day.');
+  }
+  return note;
+}
+
 /** `note`, when given, follows the list of commands. */
 function send(commands, note) {
   var queued = pending();
@@ -351,7 +363,7 @@ function send(commands, note) {
   return ui.confirm(t('device.sendTo', 'Send to {device}?', { device: deviceName() }) + listOf(commands) + (note ? note + ' ' : '') +
     (n === 1 ? t('device.queueJoinOne', 'It joins the 1 queued change; the whole set goes out after the device’s next uplink.')
        : n ? t('device.queueJoinMany', 'It joins the {n} queued changes; the whole set goes out after the device’s next uplink.', { n: n })
-       : t('device.deliveredNext', 'It is delivered after the device’s next uplink.')), t('common.send', 'Send')).then(function (ok) {
+       : t('device.deliveredNext', 'It is delivered after the device’s next uplink.')) + uplinkNote(commands), t('common.send', 'Send')).then(function (ok) {
     return ok ? request({ commands: commands }, t('device.queued', 'Queued: delivered after the next uplink')) : false;
   });
 }
@@ -386,53 +398,6 @@ function unsubscribed(pos, node, own) {
     if (m.index) { target.index = m.index; }
     return { sourceKey: key, measure: m, target: target };
   });
-}
-
-function commandsSection() {
-  var queued = pending();
-  var last = parseValue(state.server['cmd.lastResult']);
-  if (!state.writable && !queued && !last) { return null; }
-  var sec = h('<div class="ts-section"><div class="ts-section-head">' + esc(t('device.commands', 'Commands')) + ' ' + info('commands') + '</div></div>');
-  if (state.writable) {
-    var bar = h('<div class="ts-cmdbar"><button type="button" class="ts-btn" data-a="reports">' + esc(t('device.requestReports', 'Request reports')) + '</button>' +
-      '<button type="button" class="ts-btn" data-a="diag">' + esc(t('device.selfDiag', 'Self-diagnostic')) + '</button></div>');
-    if (family() === 'bus') { bar.appendChild(uplinkControl(Number(state.client['status.baseIntervalSeconds']) || 0)); }
-    bar.addEventListener('click', function (e) {
-      var a = e.target.closest('[data-a=reports], [data-a=diag]');
-      if (!a) { return; }
-      send([a.dataset.a === 'reports'
-        ? { op: 'REQUEST_REPORT', target: { mode: 'GLOBAL' }, reports: ['topology', 'subscriptions', 'status', 'device_info'] }
-        : { op: 'SELF_DIAG', target: { mode: 'GLOBAL' } }]);
-    });
-    sec.appendChild(bar);
-  }
-  if (queued) {
-    var row = h('<div class="ts-cmd" data-cmd="' + (queued.unanswered ? 'unanswered' : 'queued') + '"><div class="ts-grow"><div class="ts-row-label"></div><div class="ts-row-meta"></div></div></div>');
-    row.querySelector('.ts-row-label').textContent = queued.commands.map(commandText).join(' · ');
-    row.querySelector('.ts-row-meta').textContent = (queued.unanswered ? t('device.noAnswerSent', 'No answer, sent {ago}', { ago: t.ago(queued.sent) })
-      : t('device.queuedSent', 'Queued, sent {ago}', { ago: t.ago(queued.sent) })) +
-      (queued.frames > 1 ? ' · ' + t('device.frames', '{n} frames', { n: queued.frames }) : '');
-    row.insertBefore(h('<span class="ts-chip ' + (queued.unanswered ? 'fault">' + esc(t('device.noAnswer', 'No answer')) : 'warn">' + esc(t('device.queuedChip', 'Queued'))) + '</span>'), row.firstChild);
-    if (state.writable) {
-      if (queued.unanswered) {
-        var again = h('<button type="button" class="ts-btn" data-a="retry">' + esc(t('device.retry', 'Retry')) + '</button>');
-        again.addEventListener('click', function () { retry(queued); });
-        row.appendChild(again);
-      }
-      var drop = h('<button type="button" class="ts-btn" data-a="discard">' + esc(t('device.discard', 'Discard')) + '</button>');
-      drop.addEventListener('click', function () { discard(queued); });
-      row.appendChild(drop);
-    }
-    sec.appendChild(row);
-  }
-  if (last) {
-    var row = h('<div class="ts-cmd" data-cmd="' + (last.ok ? 'delivered' : 'failed') + '"><span class="ts-chip ' + (last.ok ? 'ok">' + esc(t('device.delivered', 'Delivered')) : 'fault">' + esc(t('device.failed', 'Failed'))) + '</span>' +
-      '<div class="ts-grow"><div class="ts-row-label"></div><div class="ts-row-meta"></div></div></div>');
-    row.querySelector('.ts-row-label').textContent = (last.commands || []).map(commandText).join(' · ') || t('device.commandNumber', 'Command #{seq}', { seq: last.seq });
-    row.querySelector('.ts-row-meta').textContent = (last.results || []).map(resultText).join(' · ') + ' · ' + t('device.answered', 'answered {ago}', { ago: t.ago(last.ackedAt) });
-    sec.appendChild(row);
-  }
-  return sec;
 }
 
 // -- stations (CA-1) -------------------------------------------------------------------------
@@ -2563,7 +2528,9 @@ function commandsCard() {
     row.querySelector('.ts-row-label').textContent = queued.commands.map(commandText).join(' · ');
     row.querySelector('.ts-row-meta').textContent = (queued.unanswered ? t('device.noAnswerSent', 'No answer, sent {ago}', { ago: t.ago(queued.sent) })
       : t('device.queuedSent', 'Queued, sent {ago}', { ago: t.ago(queued.sent) })) +
-      (queued.frames > 1 ? ' · ' + t('device.frames', '{n} frames', { n: queued.frames }) : '');
+      (queued.frames > 1 ? ' · ' + t('device.frames', '{n} frames', { n: queued.frames }) : '') +
+      (nextUplinkText() ? ' · ' + nextUplinkText() : '');
+    row.querySelector('.ts-row-meta').dataset.nextUplink = nextUplink() || '';
     if (state.writable) {
       if (queued.unanswered) {
         row.querySelector('.ts-cmd-top').appendChild(h('<button type="button" class="ts-btn sm" data-a="retry">' + esc(t('device.retry', 'Retry')) + '</button>'))
@@ -2602,16 +2569,26 @@ function commandsCard() {
 var MIN_UPLINK_S = 60, UPLINK_STEP_S = 5;
 function maxUplinkS() { return Number(state.client.wireVersion) === 3 ? 65535 * UPLINK_STEP_S : 65535; }
 
-/** The longest gap between transmissions in s, from the subscriptions the device reports
- * and its daily link check (TRX_NANO.md §12.0): `s`, and `data`, the bound of the
- * measurements sent every time, null without one. The ingest chain computes the same for
- * the inactivity timeout (HEALTH.md §1). */
+/** The longest gap between transmissions in s, from the subscriptions the device reports,
+ * after `commands` when given, and its daily link check (TRX_NANO.md §12.0): `s`, and `data`,
+ * the bound of the measurements sent every time, null without one. The ingest chain computes
+ * the same for the inactivity timeout (HEALTH.md §1). */
 var LINKCHECK_S = 86400;
-function txGap(uplink) {
+function txGap(uplink, commands) {
   var subs = {}, c = state.client;
   Object.keys(c).forEach(function (key) {
     var m = /^subscriptions\.(.+)\.(interval|enabled|send)$/.exec(key);
     if (m) { (subs[m[1]] = subs[m[1]] || {})[m[2]] = c[key]; }
+  });
+  (commands || []).forEach(function (x) {
+    var target = x.target || {};
+    if (target.mode === 'GLOBAL') { if (x.op === 'SET_INTERVAL') { uplink = x.interval_s; } return; }
+    var key = sourceKeyOf(target);
+    if (x.op === 'DELETE_SUBSCRIPTION') { delete subs[key]; return; }
+    var sub = subs[key] = subs[key] || {};
+    if (x.op === 'CREATE_SUBSCRIPTION') { sub.enabled = true; sub.interval = x.interval_s; }
+    if (x.op === 'SET_ENABLED') { sub.enabled = x.enabled; }
+    if (x.op === 'SET_INTERVAL') { sub.interval = x.interval_s; }
   });
   if (!Object.keys(subs).length) { return { s: uplink, data: null }; }
   var lo = 0;
@@ -2622,6 +2599,20 @@ function txGap(uplink) {
   });
   var d = lo ? uplink * Math.ceil(lo / uplink) : null, lc = uplink * Math.ceil(LINKCHECK_S / uplink);
   return { s: d === null ? lc : Math.min(d, lc), data: d };
+}
+
+/** When the device transmits next at the latest: its last uplink plus its longest gap between
+ * transmissions. A queued change goes out right after it. Null when either is unknown. */
+function nextUplink() {
+  var last = Number(state.server.lastActivityTime), uplink = Number(state.client['status.baseIntervalSeconds']);
+  return last && uplink ? last + txGap(uplink).s * 1000 : null;
+}
+
+function nextUplinkText() {
+  var at = nextUplink();
+  if (!at) { return ''; }
+  return at > Date.now() ? t('device.nextUplinkBy', 'next uplink planned by {time}', { time: ui.when(at) })
+    : t('device.nextUplinkDue', 'next uplink due since {time}', { time: ui.when(at) });
 }
 
 /** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
