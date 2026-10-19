@@ -24,6 +24,9 @@
  *   installation  the Installation view of the bound project or station; never
  *             on a public link
  *   charts    the station's own template dashboard, `config.stationDashboard`
+ *   deleteHome  *Delete project dashboard*, on the bound project's own home
+ *             dashboard only, for a user who may delete dashboards; never on a
+ *             public link
  *   settings  the Settings view of the bound customer, project or station, in
  *             the Projects dashboard; of the bound device, in the Fleet
  *             dashboard; never on a public link
@@ -99,6 +102,40 @@ function build(ctx, tb, ui, card, opts) {
   var stationsOfDevice = null;
   function deviceStations(e) { return stationsOfDevice || (stationsOfDevice = tb.deviceStations(e).catch(function () { return []; })); }
 
+  function may(resource, op) {
+    return ctx.$scope.$injector.get(ctx.servicesMap.get('userPermissionsService')).hasGenericPermission(resource, op);
+  }
+
+  /** Deletes project `e`'s home dashboard `id` after ThingsBoard's own confirmation, the bar being one row high:
+   * the project unlinked and, when the dashboard had a public link, taken out of its public group as *Public link off* does. */
+  function deleteHome(e, id) {
+    var title;
+    Promise.all([tb.get('/api/dashboard/info/' + id), tb.ownerOf(e)]).then(function (got) {
+      var owner = got[1];
+      title = got[0].title;
+      return tb.publicMembers(owner, 'DASHBOARD').then(function (pub) {
+        var linked = !!pub.ids[id];
+        var html = t('nav.deleteHomeConfirm', '<b>{title}</b> is deleted for good. The project and its stations stay as they are.', { title: ui.esc(title) }) +
+          (linked ? ' ' + t('nav.deleteHomeLink', 'Its public link stops working and the project leaves its public group; each station keeps its choice.') : '');
+        return new Promise(function (resolve) {
+          ctx.dialogs.confirm(t('nav.deleteHomeTitle', 'Delete the project dashboard?'), html, t('common.cancel', 'Cancel'), t('common.delete', 'Delete'))
+            .subscribe({ next: resolve, error: function () { resolve(false); } });
+        }).then(function (ok) {
+          if (!ok) { return false; }
+          return (linked ? tb.setPublic(e, owner, false) : Promise.resolve()).then(function () {
+            return tb.deleteAttrs(e, ['config.homeDashboard']);
+          }).then(function () { return tb.del('/api/dashboard/' + id); }).then(function () { return true; });
+        });
+      });
+    }).then(function (done) {
+      if (!done) { return; }
+      ctx.showSuccessToast(t('templates.delete.done', '{title} deleted', { title: title }));
+      tb.openDashboard(opts.projectDashboardId, 'project', e);
+    }).catch(function (err) {
+      ctx.showErrorToast(t('common.notDeleted', 'Not deleted: {error}', { error: (err && err.message) || String(err) }));
+    });
+  }
+
   function openProject(p) { button('project', ICON_PROJECT, t('nav.projectOf', 'Project: {name}', { name: p.name }), function () { tb.openProject(opts.projectDashboardId, p); }); }
 
   var LINKS = {
@@ -160,6 +197,15 @@ function build(ctx, tb, ui, card, opts) {
       if (e.kind !== 'Project') { return; }
       return tb.attrsMap(e).then(function (attrs) { return tb.readableDashboard(attrs['config.homeDashboard']); }).then(function (id) {
         if (id) { button('home', ICON_HOME, t('nav.home', 'Project dashboard'), function () { tb.openDashboard(id); }); }
+      });
+    },
+    deleteHome: function (e) {
+      var here = ctx.stateController && ctx.stateController.dashboardId;
+      if (e.kind !== 'Project' || tb.isPublicView() || !here || !may('DASHBOARD', 'DELETE')) { return; }
+      return tb.attrsMap(e).then(function (attrs) {
+        // Only on the dashboard the project links: a replaced one is not the project's to delete from here.
+        if (attrs['config.homeDashboard'] !== here) { return; }
+        button('delete-home', ICON.trash, t('nav.deleteHome', 'Delete project dashboard'), function () { deleteHome(e, here); }).classList.add('ts-nav-danger');
       });
     },
     station: function (e) {

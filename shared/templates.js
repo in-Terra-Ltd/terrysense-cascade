@@ -26,7 +26,7 @@ root.TerrySenseTemplates = function (ui, tb) {
   var MAP_FQN = 'system.map';
   var TABLE_FQN = 'system.cards.entities_table';
   var NAV_FQN = 'tenant.terrysense.navigation';
-  var HOME_LINKS = ['projects', 'installation', 'settings'];
+  var HOME_LINKS = ['projects', 'installation', 'settings', 'deleteHome'];
   var HOME_GROUP = 'Project home dashboards';
   var HOME_KEY = 'config.homeDashboard';
   // Fixed texts ThingsBoard already translates, by its own keys (I18N.md §2).
@@ -816,7 +816,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       var el = h('<div class="ts-home-chart"><div class="ts-home-chart-head"><input class="ts-input ts-home-chart-title" data-f="chart-title">' +
         '<button type="button" class="ts-icon-btn" data-a="up">' + ICON_UP + '</button>' +
         '<button type="button" class="ts-icon-btn" data-a="down">' + ICON_DOWN + '</button>' +
-        '<button type="button" class="ts-icon-btn" data-a="remove-chart">' + ICON_TRASH + '</button></div>' +
+        '<button type="button" class="ts-icon-btn" data-a="remove-chart">' + ui.ICON.trash + '</button></div>' +
         '<div class="ts-home-row"><span class="ts-home-row-label"></span><span class="ts-home-chips" data-list="channels"></span></div>' +
         '<div class="ts-home-row"><span class="ts-home-row-label"></span><span class="ts-home-chips" data-list="stations"></span></div>' +
         '<div class="ts-home-row ts-home-mode"><span class="ts-home-row-label"></span></div>' +
@@ -1006,7 +1006,6 @@ root.TerrySenseTemplates = function (ui, tb) {
     });
   }
 
-  var ICON_TRASH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"/><path d="M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/></svg>';
 
   function errText(e) { return (e && e.error && e.error.message) || (e && e.message) || String(e); }
 
@@ -1211,7 +1210,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         var editBtn = box.appendChild(h('<button type="button" class="ts-icon-btn" data-a="edit-template">' + ui.ICON.edit + '</button>'));
         editBtn.title = root.TerrySenseT('templates.edit.button', 'Edit this template');
         editBtn.addEventListener('click', function (e) { e.stopPropagation(); edit(t); });
-        var delBtn = box.appendChild(h('<button type="button" class="ts-icon-btn ts-tpl-del" data-a="delete-template">' + ICON_TRASH + '</button>'));
+        var delBtn = box.appendChild(h('<button type="button" class="ts-icon-btn ts-tpl-del" data-a="delete-template">' + ui.ICON.trash + '</button>'));
         delBtn.title = root.TerrySenseT('templates.delete.button', 'Delete this template');
         delBtn.addEventListener('click', function (e) { e.stopPropagation(); remove(t); });
         return box;
