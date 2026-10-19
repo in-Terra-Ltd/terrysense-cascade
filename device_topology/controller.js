@@ -1610,10 +1610,10 @@ function measurementsSection() {
   return sec;
 }
 
-/** A group of rows under a header that folds: a position, a LOGR2 sensor, a device's readings; `folded` closes it at first. */
-function group(id, folded) {
+/** A group of rows under a header that folds, closed at first unless `open`: a position, a LOGR2 sensor, a device's readings. */
+function group(id, open) {
   var el = h('<details class="ts-mgroup fold"><summary class="ts-mgroup-head"></summary></details>');
-  el.open = state.open[id] === undefined ? !folded : state.open[id];
+  el.open = state.open[id] === undefined ? !!open : state.open[id];
   el.addEventListener('toggle', function () { state.open[id] = el.open; });
   var head = el.querySelector('.ts-mgroup-head');
   head.innerHTML = '<span class="ts-pos-chev">' + ICON.chev + '</span>' +
@@ -1759,7 +1759,7 @@ function readingRow(key, diagnostic, bus) {
 
 // -- bus groups ---------------------------------------------------------------------------
 
-/** The LOGR itself, then the positions in bus order, a removed one after the live ones, then the former positions, folded. */
+/** The LOGR itself, then the positions in bus order, a removed one after the live ones, then the former positions, all folded at first. */
 function busGroups(banners) {
   var nodes = topology(), srcs = sources(), out = [];
   var positions = {};
@@ -1789,7 +1789,7 @@ function positionGroup(pos, node, srcs, removed) {
   var here = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
   var earlier = removed ? [] : here.filter(function (s) { return M.fromEarlier(model(), s, node); });
   var own = here.filter(function (s) { return earlier.indexOf(s) < 0; });
-  var g = group('p' + pos, pos === 0);
+  var g = group('p' + pos);
   g.el.dataset.position = pos;
   g.num(pos);
   var p = node && state.peripherals[node.type];
@@ -1845,7 +1845,7 @@ function positionGroup(pos, node, srcs, removed) {
 
 /** The catalog measures of a position the LOGR does not subscribe, folded; in the edit mode each can be subscribed. */
 function notSentGroup(pos, list) {
-  var g = group('p' + pos + '.notSent', true);
+  var g = group('p' + pos + '.notSent');
   g.el.classList.add('inner', 'ts-notsent');
   g.num(null);
   g.name(t('device.notSent', 'Not sent'));
@@ -1881,7 +1881,7 @@ function notSentGroup(pos, list) {
 /** What an earlier peripheral at the position left behind (DEVICE_VIEW.md §2 *Sources*), folded unless a station still stores it. */
 function earlierGroup(pos, list) {
   var stored = list.some(function (s) { return (state.wiring[s.sourceKey] || []).length; });
-  var g = group('p' + pos + '.earlier', !stored);
+  var g = group('p' + pos + '.earlier', stored);
   g.el.classList.add('inner');
   g.el.dataset.earlier = list.length;
   g.num(null);
@@ -1918,7 +1918,7 @@ function earlierRow(s) {
 
 /** Removed positions whose readings have all gone silent, folded out of the way. */
 function formerGroup(list, srcs) {
-  var g = group('former', true);
+  var g = group('former');
   g.el.dataset.former = list.length;
   g.num(null);
   g.name(t('device.formerPositions', 'Former positions'));
@@ -2031,7 +2031,7 @@ function drycLink(container) {
 
 // -- LOGR2 and other devices ---------------------------------------------------------------
 
-/** A LOGR2's own readings first, folded, then its sensors by key prefix at addresses 1, 2; any other device's readings in one group. */
+/** A LOGR2's own readings first, then its sensors by key prefix at addresses 1, 2; any other device's readings in one group. */
 function partGroups() {
   var fam = family(), keys = readings(), out = [], address = 0;
   var parts = fam === 'logr2' ? logr2Parts(keys) : [{ id: 'device', label: state.device.type || t('common.device', 'Device'), keys: keys }];
@@ -2045,7 +2045,7 @@ function partGroups() {
 
 function partGroup(part, logr2, address) {
   var logger = part.id === 'logr';
-  var g = group('part.' + part.id, logger);
+  var g = group('part.' + part.id);
   g.el.dataset.part = part.id;
   g.num(logger ? 0 : logr2 ? address : null);
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
