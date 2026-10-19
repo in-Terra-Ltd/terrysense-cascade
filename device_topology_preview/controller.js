@@ -1626,10 +1626,10 @@ function measurementsSection() {
   return sec;
 }
 
-/** A group of lines under a header that folds, opened as the reader last left it, at first open unless `folded`:
+/** A group of lines under a header that folds, opened as the reader last left it, at first closed unless `open`:
  * a position, a LOGR2 sensor, a device's readings. Each line's keys, wiring and controls go into the group's closed *Configure*. */
-function group(id, folded) {
-  var el = memo.bind(h('<details class="ts-mgroup fold"><summary class="ts-mgroup-head"></summary></details>'), 'group.' + id, !folded);
+function group(id, open) {
+  var el = memo.bind(h('<details class="ts-mgroup fold"><summary class="ts-mgroup-head"></summary></details>'), 'group.' + id, !!open);
   var head = el.querySelector('.ts-mgroup-head');
   head.innerHTML = '<span class="ts-pos-chev">' + ICON.chev + '</span>' +
     '<span class="ts-pos-num"></span><span class="ts-mgroup-name"></span><span class="ts-mono"></span><span class="ts-pos-flags"></span>' +
@@ -1849,7 +1849,7 @@ function groupVerdict(g) {
 
 // -- bus groups ---------------------------------------------------------------------------
 
-/** The LOGR itself, then the positions in bus order, a removed one after the live ones, then the former positions, folded. */
+/** The LOGR itself, then the positions in bus order, a removed one after the live ones, then the former positions, all folded at first. */
 function busGroups(banners) {
   var nodes = topology(), srcs = sources(), out = [];
   var positions = {};
@@ -1879,7 +1879,7 @@ function positionGroup(pos, node, srcs, removed) {
   var here = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
   var earlier = removed ? [] : here.filter(function (s) { return M.fromEarlier(model(), s, node); });
   var own = here.filter(function (s) { return earlier.indexOf(s) < 0; });
-  var g = group('p' + pos, pos === 0);
+  var g = group('p' + pos);
   g.el.dataset.position = pos;
   g.num(pos);
   var p = node && state.peripherals[node.type];
@@ -2005,7 +2005,7 @@ function earlierPart(pos, list, stored) {
 
 /** Removed positions whose readings have all gone silent, folded out of the way. */
 function formerGroup(list, srcs) {
-  var g = group('former', true);
+  var g = group('former');
   g.el.dataset.former = list.length;
   g.num(null);
   g.name(t('device.formerPositions', 'Former positions'));
@@ -2125,7 +2125,7 @@ function drycLink(container) {
 
 // -- LOGR2 and other devices ---------------------------------------------------------------
 
-/** A LOGR2's own readings first, folded, then its sensors by key prefix at addresses 1, 2; any other device's readings in one group. */
+/** A LOGR2's own readings first, then its sensors by key prefix at addresses 1, 2; any other device's readings in one group. */
 function partGroups() {
   var fam = family(), keys = readings(), out = [], address = 0;
   var parts = fam === 'logr2' ? logr2Parts(keys) : [{ id: 'device', label: state.device.type || t('common.device', 'Device'), keys: keys }];
@@ -2139,7 +2139,7 @@ function partGroups() {
 
 function partGroup(part, logr2, address) {
   var logger = part.id === 'logr';
-  var g = group('part.' + part.id, logger);
+  var g = group('part.' + part.id);
   g.el.dataset.part = part.id;
   g.num(logger ? 0 : logr2 ? address : null);
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
