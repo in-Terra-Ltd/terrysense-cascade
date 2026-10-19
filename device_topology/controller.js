@@ -1844,6 +1844,10 @@ function positionGroup(pos, node, srcs, removed) {
   var here = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
   var earlier = removed ? [] : here.filter(function (s) { return M.fromEarlier(model(), s, node); });
   var own = here.filter(function (s) { return earlier.indexOf(s) < 0; });
+  // Once the device has reported its subscriptions, a source with readings it no longer subscribes stopped.
+  var reported = state.client['subscriptions.frame'] !== undefined;
+  var stopped = removed || !reported ? [] : own.filter(function (s) { return !subscribed(s) && s.kind !== 'drycStatus'; });
+  var live = own.filter(function (s) { return stopped.indexOf(s) < 0; });
   var g = group('p' + pos);
   g.el.dataset.position = pos;
   g.num(pos);
@@ -1862,7 +1866,7 @@ function positionGroup(pos, node, srcs, removed) {
   var added = {};
   state.adds.forEach(function (a) { added[a.sourceKey] = true; });
   var more = unsubscribed(pos, node, own).filter(function (o) { return !added[o.sourceKey]; });
-  own.forEach(function (s) { g.add(sourceRow(s, node, M.diagnostic(model(), s, node))); });
+  live.forEach(function (s) { g.add(sourceRow(s, node, M.diagnostic(model(), s, node))); });
   // A DRYC's inputs, relays and rules belong to its own view: one row of their state, which opens it.
   if (dryc && fields.length && !own.some(function (s) { return s.kind === 'drycStatus'; })) { g.add(drycRow('p' + pos + '.', pos, true)); }
   addedRows(pos).forEach(function (r) { g.add(r); });
@@ -1877,13 +1881,15 @@ function positionGroup(pos, node, srcs, removed) {
     g.rows.forEach(function (r) { r.attention = true; });
   }
   if (!removed) {
-    var sent = own.filter(function (s) { return !(s.enabled === false || s.enabled === 'false'); }).length, parts = [];
+    var sent = live.filter(function (s) { return !(s.enabled === false || s.enabled === 'false'); }).length, parts = [];
     if (own.length || more.length) { parts.push(t('device.sentCount', '{n} sent', { n: sent })); }
+    if (stopped.length) { parts.push(t('device.noLongerSentCount', '{n} no longer sent', { n: stopped.length })); }
     if (more.length) { parts.push(t('device.notSentCount', '{n} not sent', { n: more.length })); }
     g.sum(parts.join(' · '));
     g.el.dataset.sent = sent;
     g.el.dataset.notSent = more.length;
   }
+  if (stopped.length) { g.add({ conf: leftoverPart('stopped', pos, stopped, node, false) }); }
   if (more.length) { g.add({ conf: notSentPart(pos, more) }); }
   if (earlier.length) {
     var stored = earlier.some(function (s) { return (state.wiring[s.sourceKey] || []).length; });
@@ -1891,7 +1897,7 @@ function positionGroup(pos, node, srcs, removed) {
       g.flag('warn', t('device.earlierStored', 'earlier readings still stored'));
       g.confFlag('warn', t('device.earlierStored', 'earlier readings still stored'));
     }
-    g.add({ conf: earlierPart(pos, earlier, stored) });
+    g.add({ conf: leftoverPart('earlier', pos, earlier, null, stored) });
   }
   if (!removed) { groupVerdict(g); }
   return g;
@@ -1938,31 +1944,44 @@ function notSentPart(pos, list) {
   return el;
 }
 
-/** What an earlier peripheral at the position left behind (DEVICE_VIEW.md §2 *Sources*), open while a station still stores it. */
-function earlierPart(pos, list, stored) {
-  var last = newestTs(list);
-  var el = confPart('earlier.' + pos, t('device.earlierReadings', 'Earlier readings at this position'),
-    last ? t('device.lastReading', 'last reading {when}', { when: ui.when(last) }) : '', list.length, stored);
-  el.dataset.earlier = list.length;
+/** Readings the device no longer sends, with their last value and the stations still storing them;
+ * a writer deletes them one by one or all at once. `kind` is `earlier`, what an earlier peripheral
+ * at the position left behind, or `stopped`, sources the device's subscriptions report no longer
+ * carries (DEVICE_VIEW.md §2 *Sources*). Open at first when `open`. */
+function leftoverPart(kind, pos, list, node, open) {
+  var last = newestTs(list), earlier = kind === 'earlier';
+  var el = confPart(kind + '.' + pos, earlier ? t('device.earlierReadings', 'Earlier readings at this position') : t('device.noLongerSent', 'No longer sent'),
+    last ? t('device.lastReading', 'last reading {when}', { when: ui.when(last) }) : '', list.length, open);
+  el.dataset[kind] = list.length;
+  function keysOf(sources) {
+    var keys = [];
+    sources.forEach(function (s) { [s.sourceKey, s.sourceKey + '.status'].forEach(function (k) { if (state.latest[k]) { keys.push(k); } }); });
+    return keys;
+  }
   if (state.writable) {
-    var del = el.querySelector('.ts-mgroup-acts').appendChild(h('<button type="button" class="ts-btn danger sm" data-a="delete-earlier"></button>'));
+    var del = el.querySelector('.ts-mgroup-acts').appendChild(h('<button type="button" class="ts-btn danger sm" data-a="delete-' + kind + '"></button>'));
     del.textContent = t('device.deleteData', 'Delete data');
     del.addEventListener('click', function (e) {
       e.preventDefault();
       e.stopPropagation();
-      var keys = [];
-      list.forEach(function (s) { [s.sourceKey, s.sourceKey + '.status'].forEach(function (k) { if (state.latest[k]) { keys.push(k); } }); });
-      deleteData(t('device.earlierPeripheral', 'earlier peripheral at position {pos}', { pos: pos }), keys);
+      deleteData(earlier ? t('device.earlierPeripheral', 'earlier peripheral at position {pos}', { pos: pos })
+        : t('device.noLongerSentAt', 'measurements no longer sent at position {pos}', { pos: pos }), keysOf(list));
     });
   }
   list.forEach(function (s) {
-    var v = state.latest[s.sourceKey], row = el.appendChild(crow(true));
+    var v = state.latest[s.sourceKey], row = el.appendChild(crow(true)), label = sourceLabel(s, node);
     row.dataset.source = s.sourceKey;
-    row.dataset.state = 'earlier';
-    row.querySelector('.ts-row-label').textContent = sourceLabel(s, null);
+    row.dataset.state = kind;
+    row.querySelector('.ts-row-label').textContent = label;
     nameSub(row, s.sourceKey, 'ts-mono');
-    row.querySelector('.ts-mc-every').appendChild(h('<span class="ts-wire-diag"></span>')).textContent =
-      v ? fmtValue(v.value) + (unitOf(s) ? ' ' + unitOf(s) : '') + ' · ' + t.ago(v.ts) : '—';
+    var every = row.querySelector('.ts-mc-every');
+    every.appendChild(h('<span class="ts-wire-diag"></span>')).textContent = v ? fmtValue(v.value) + (unitOf(s) ? ' ' + unitOf(s) : '') + ' · ' + t.ago(v.ts) : '—';
+    if (state.writable) {
+      var one = every.appendChild(h('<button type="button" class="ts-btn danger sm" data-a="delete-one"></button>'));
+      one.textContent = t('common.delete', 'Delete');
+      one.title = t('device.deleteData', 'Delete data');
+      one.addEventListener('click', function () { deleteData(label, keysOf([s])); });
+    }
     storeCell(row, s.sourceKey, false, true);
   });
   return el;
