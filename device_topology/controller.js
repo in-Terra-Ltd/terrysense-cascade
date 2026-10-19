@@ -88,6 +88,7 @@ function register() {
   ];
 }
 var FINE_STATUS = /^(all functional|ok|)$/i;
+var ICON_DEVICE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 7h6M9 11h6"/></svg>';
 var ICON_STATION = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21V9"/><path d="M8 21h8"/><circle cx="12" cy="6" r="3"/></svg>';
 var parseSource = M.parseSource;
 
@@ -378,33 +379,6 @@ function unsubscribed(pos, node, own) {
     if (m.group) { target.group = m.group; }
     if (m.index) { target.index = m.index; }
     return { sourceKey: key, measure: m, target: target };
-  });
-}
-
-/** A catalog measure the position offers joins the edit mode's changes, sent with them. */
-function addDrawer(pos, node, own) {
-  var dr = ui.openDrawer(t('device.addMeasurementTitle', 'Add a measurement'), t('device.position', 'Position {pos}', { pos: pos }) + ' · ' + esc(node.type));
-  var added = {};
-  state.adds.forEach(function (a) { added[a.sourceKey] = true; });
-  var options = unsubscribed(pos, node, own).filter(function (o) { return !added[o.sourceKey]; });
-  dr.body.appendChild(h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.interval', 'Interval')) + '</span></div>' +
-    '<div class="ts-ctl"><span><input class="ts-input num" type="number" min="1" step="1" value="900"> s</span></div></div>'));
-  var input = dr.body.querySelector('input');
-  options.forEach(function (o) {
-    var entry = state.names[o.measure.defaultName] || {};
-    var label = entry.label ? t.channel(o.measure.defaultName, entry.label) : o.measure.defaultName;
-    var row = h('<div class="ts-tsrc"><div><div class="ts-row-label"></div><div class="ts-mono"></div></div>' +
-      '<button type="button" class="ts-btn sm">' + ICON.plus + esc(t('common.add', 'Add')) + '</button></div>');
-    row.querySelector('.ts-row-label').textContent = label;
-    row.querySelector('.ts-mono').textContent = o.sourceKey;
-    row.querySelector('button').addEventListener('click', function () {
-      var v = Number(input.value);
-      if (!(v >= 1 && v <= 65535 && Math.floor(v) === v)) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
-      state.adds.push({ sourceKey: o.sourceKey, target: o.target, interval: v, label: label });
-      ui.closeDrawer();
-      render();
-    });
-    dr.body.appendChild(row);
   });
 }
 
@@ -1721,13 +1695,17 @@ function storeCell(row, key, diagnostic, earlier) {
     wire.dataset.wired = '0';
     if (!r) { wire.appendChild(h('<span class="ts-wire-none"></span>')).textContent = t('common.notStored', 'not stored'); }
   } else {
-    wire.appendChild(h('<span class="ts-wire-diag"></span>')).textContent = t('device.staysOnDevice', 'diagnostic, stays on the device');
+    var only = wire.appendChild(h('<span class="ts-chip ts-device-only">' + ICON_DEVICE + '<span></span></span>'));
+    only.lastChild.textContent = t('device.deviceOnly', 'Device only');
+    only.title = t('device.deviceOnlyTip', 'A measurement about the LOGR itself: it stays on the device unless a station stores it');
   }
   if (r) {
-    var b = wire.appendChild(feeds.length
+    var quiet = feeds.length || diagnostic;
+    var b = wire.appendChild(quiet
       ? h('<button type="button" class="ts-icon-btn" data-a="store">' + ICON.edit + '</button>')
       : h('<button type="button" class="ts-btn sm ts-store-btn" data-a="store"></button>'));
-    if (feeds.length) { b.title = t('common.stations', 'Stations'); } else { b.textContent = t('device.storeOnStation', 'Store on a station…'); }
+    if (quiet) { b.title = feeds.length ? t('common.stations', 'Stations') : t('device.storeOnStation', 'Store on a station…'); }
+    else { b.textContent = t('device.storeOnStation', 'Store on a station…'); }
     b.addEventListener('click', function () { storeDrawer(r); });
   }
   return !diagnostic && !earlier && !feeds.length;
@@ -1826,15 +1804,10 @@ function positionGroup(pos, node, srcs, removed) {
   if (removed) { g.el.dataset.removed = '1'; odd = true; }
   else if (!node) { g.flag('warn', t('device.notInTopology', 'not in the topology report')); odd = true; }
   else if (!p && pos !== 0) { g.flag('warn', t('device.notInCatalog', 'not in the catalog')); odd = true; }
-  var more = unsubscribed(pos, node, own);
-  if (more.length && !state.editing) {
-    g.flag('', t('device.available', '+{n} available', { n: more.length }), ['data-available', String(more.length)]).title =
-      t('device.availableTip', 'Measurements this peripheral offers that the LOGR does not subscribe, from the catalog');
-  }
-  if (state.writable && state.editing && more.length) {
-    g.act('<button type="button" class="ts-btn sm ts-add" data-a="add">' + ICON.plus + esc(t('device.addMeasurement', 'Add measurement')) + '</button>', function () { addDrawer(pos, node, own); });
-  }
-  own.forEach(function (s) { g.add(sourceRow(s, node, pos === 0)); });
+  var added = {};
+  state.adds.forEach(function (a) { added[a.sourceKey] = true; });
+  var more = unsubscribed(pos, node, own).filter(function (o) { return !added[o.sourceKey]; });
+  own.forEach(function (s) { g.add(sourceRow(s, node, M.diagnostic(model(), s, node))); });
   // A DRYC's inputs, relays and rules belong to its own view: one row of their state, which opens it.
   if (dryc && fields.length && !own.some(function (s) { return s.kind === 'drycStatus'; })) { g.add(drycRow('p' + pos + '.', pos, true)); }
   addedRows(pos).forEach(function (r) { g.add(r); });
@@ -1850,19 +1823,58 @@ function positionGroup(pos, node, srcs, removed) {
   }
   var faulting = g.rows.filter(function (r) { return r.el.dataset.state === 'fault' || r.el.querySelector('[data-alarm]'); }).length;
   var unstored = g.rows.filter(function (r) { return r.unstored; }).length;
-  if (pos === 0) {
-    if (own.length) { g.sum(own.length === 1 ? t('device.diagnosticOne', '1 diagnostic') : t('device.diagnosticMany', '{n} diagnostics', { n: own.length })); }
-  } else if (faulting) {
-    g.flag('fault', t('device.faultingCount', '{n} faulting', { n: faulting }));
-  } else if (!removed && !dryc && own.length) {
-    g.sum(unstored ? (unstored === 1 ? t('device.notStoredOne', '1 not stored') : t('device.notStoredMany', '{n} not stored', { n: unstored })) : t('device.allStoredShort', 'all stored'));
+  if (faulting) { g.flag('fault', t('device.faultingCount', '{n} faulting', { n: faulting })); }
+  if (!removed) {
+    var sent = own.filter(function (s) { return !(s.enabled === false || s.enabled === 'false'); }).length, parts = [];
+    if (own.length || more.length) { parts.push(t('device.sentCount', '{n} sent', { n: sent })); }
+    if (more.length) { parts.push(t('device.notSentCount', '{n} not sent', { n: more.length })); }
+    if (unstored) { parts.push(unstored === 1 ? t('device.notStoredOne', '1 not stored') : t('device.notStoredMany', '{n} not stored', { n: unstored })); }
+    g.sum(parts.join(' · '));
+    g.el.dataset.sent = sent;
+    g.el.dataset.notSent = more.length;
   }
+  if (more.length) { g.el.appendChild(notSentGroup(pos, more).el); }
   if (earlier.length) {
     var inner = earlierGroup(pos, earlier);
     if (inner.rows.some(function (r) { return r.attention; })) { g.flag('warn', t('device.earlierStored', 'earlier readings still stored')); }
     g.el.appendChild(inner.el);
     inner.rows.forEach(function (r) { g.rows.push(r); });
   }
+  return g;
+}
+
+/** The catalog measures of a position the LOGR does not subscribe, folded; in the edit mode each can be subscribed. */
+function notSentGroup(pos, list) {
+  var g = group('p' + pos + '.notSent', true);
+  g.el.classList.add('inner', 'ts-notsent');
+  g.num(null);
+  g.name(t('device.notSent', 'Not sent'));
+  g.mono(t('device.notSentHint', 'in the catalog, not subscribed: nothing reaches the cloud'));
+  g.sum(String(list.length));
+  list.forEach(function (o) {
+    var entry = state.names[o.measure.defaultName] || {};
+    var label = entry.label ? t.channel(o.measure.defaultName, entry.label) : o.measure.defaultName;
+    var row = mrow(true);
+    row.dataset.notsent = o.sourceKey;
+    row.querySelector('.ts-row-label').textContent = label;
+    nameSub(row, o.sourceKey, 'ts-mono');
+    var every = row.querySelector('.ts-mc-every');
+    if (state.writable && state.editing) {
+      var iv = intervalInputs(900);
+      every.appendChild(iv.el);
+      var b = every.appendChild(h('<button type="button" class="ts-btn sm" data-a="subscribe"></button>'));
+      b.textContent = t('device.subscribe', 'Subscribe');
+      b.addEventListener('click', function () {
+        var v = iv.seconds();
+        if (!(v >= 1 && v <= 65535 && Math.floor(v) === v)) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
+        state.adds.push({ sourceKey: o.sourceKey, target: o.target, interval: v, label: label });
+        render();
+      });
+    } else {
+      every.appendChild(h('<span class="ts-wire-diag"></span>')).textContent = t('device.notSentShort', 'not sent');
+    }
+    g.add({ el: row, attention: false, unstored: false });
+  });
   return g;
 }
 

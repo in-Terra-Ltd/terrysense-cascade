@@ -106,6 +106,12 @@ function fromEarlier(m, s, node) {
   return !measureOf(m, s, node) || silent(m, s);
 }
 
+/** A measurement about the LOGR itself, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */
+function diagnostic(m, s, node) {
+  var x = measureOf(m, s, node);
+  return x ? !!(m.names[x.defaultName] || {}).diagnostic : s.position === 0;
+}
+
 function measureOf(m, s, node) {
   var p = node && m.peripherals[node.type];
   return p && (p.measures || []).filter(function (x) {
@@ -233,7 +239,7 @@ function mappable(m, mapped) {
         : s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
         : s.position + ' · ' + (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral')),
       earlier: earlier,
-      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: s.position === 0 || !!(name && (m.names[name] || {}).diagnostic)
+      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && (m.names[name] || {}).diagnostic)
     };
   }).filter(function (r) { return r.names.length && !DRYC_KEY.test(r.key); });
 }
@@ -340,7 +346,7 @@ function storeOne(entries, deviceId, key, from, target) {
 root.TerrySenseMapping = {
   SOURCE_KEY_RE: SOURCE_KEY_RE, NOT_READINGS: NOT_READINGS, RULE_SOURCE: RULE_SOURCE, DRYC_KEY: DRYC_KEY, DRYC_FIELD: DRYC_FIELD,
   LOGR2_SENSORS: LOGR2_SENSORS, NETWORK_KEYS: NETWORK_KEYS,
-  parseSource: parseSource, latestKeys: latestKeys, topology: topology, sources: sources, silent: silent, fromEarlier: fromEarlier, measureOf: measureOf,
+  parseSource: parseSource, latestKeys: latestKeys, topology: topology, sources: sources, silent: silent, fromEarlier: fromEarlier, diagnostic: diagnostic, measureOf: measureOf,
   sourceLabel: sourceLabel, unitOf: unitOf, readings: readings, nameOf: nameOf, entryOf: entryOf, labelOf: labelOf,
   readingUnit: readingUnit, logr2Parts: logr2Parts, mineOf: mineOf, othersOf: othersOf, mappedNames: mappedNames,
   namesForKind: namesForKind, namesForReading: namesForReading, mappable: mappable, channelLabel: channelLabel,
