@@ -484,7 +484,7 @@ function flowLanes() {
       stored[mine[ch]] = true;
       return { channel: byName[ch], key: mine[ch], row: rows[order[mine[ch]]] || null };
     });
-    rows.forEach(function (r) { if (!stored[r.key]) { items.push({ channel: null, key: r.key, row: r }); } });
+    rows.forEach(function (r) { if (!stored[r.key] && !r.earlier) { items.push({ channel: null, key: r.key, row: r }); } });
     items.sort(function (a, b) {
       var oa = order[a.key] === undefined ? rows.length : order[a.key], ob = order[b.key] === undefined ? rows.length : order[b.key];
       return oa - ob || (a.channel ? a.channel.name : '').localeCompare(b.channel ? b.channel.name : '');

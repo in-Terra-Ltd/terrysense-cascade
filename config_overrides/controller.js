@@ -191,7 +191,7 @@ function channelsWith(attrs) {
 
 root.innerHTML = '';
 var cardEl = h('<div class="ts-card"><div class="ts-head"><div class="ts-head-icon">' + ICON.settings + '</div><div class="ts-head-text">' +
-  '<div class="ts-title">' + esc(t('common.settings', 'Settings')) + ' ' + info('cascade') + '</div><div class="ts-subtitle"></div></div><span class="ts-chip level" hidden></span></div>' +
+  '<div class="ts-eyebrow"><span>' + esc(t('common.settings', 'Settings')) + '</span> ' + info('cascade') + '</div><div class="ts-entity"></div><div class="ts-crumbs"></div></div></div>' +
   '<div class="ts-body"><div class="ts-loading">' + esc(t('common.loading', 'Loading…')) + '</div></div>' +
   '<div class="ts-foot" hidden><span class="ts-foot-left"></span><span class="ts-spacer"></span>' +
   '<label class="ts-switch ts-summary"><input type="checkbox" class="ts-show-inh"> ' + esc(t('settings.showInherited', 'Show inherited')) + '</label></div></div>');
@@ -301,12 +301,26 @@ function bookUsage(holders) {
 }
 
 function renderHead() {
-  var next = state.ancestors[0];
-  cardEl.querySelector('.ts-subtitle').textContent = state.origin.name +
-    (next ? t('settings.inheritsFrom', ' · inherits from {name}', { name: next.level.role === 'defaults' ? t('settings.levelDefaults', 'in-terra defaults') : next.level.name }) : '');
-  var chip = cardEl.querySelector('.ts-chip.level');
-  chip.hidden = false;
-  chip.textContent = kindName(state.origin.kind);
+  cardEl.querySelector('.ts-eyebrow span').textContent = t('settings.settingsOfKind', 'Settings · {kind}', { kind: kindName(state.origin.kind) });
+  var name = cardEl.querySelector('.ts-entity');
+  name.textContent = name.title = state.origin.name;
+  var crumbs = cardEl.querySelector('.ts-crumbs');
+  crumbs.innerHTML = '';
+  if (state.ancestors.length) { crumbs.appendChild(h('<span></span>')).textContent = t('settings.inheritsFromLabel', 'Inherits from'); }
+  state.ancestors.forEach(function (a, i) {
+    var l = a.level, text = l.role === 'defaults' || l.role === 'deviceDefaults' ? levelLabel(l) : l.name;
+    // Only the Projects dashboard has a Settings view per customer, project and station.
+    var link = !state.deviceBranch && (l.role === 'chain' || l.role === 'customer');
+    if (i) { crumbs.insertAdjacentHTML('beforeend', ICON.chev); }
+    var c = crumbs.appendChild(h(link ? '<button type="button" class="ts-crumb"></button>' : '<span class="ts-crumb"></span>'));
+    c.textContent = text;
+    c.title = kindName(l.kind);
+    if (link) {
+      c.addEventListener('click', function () {
+        ctx.stateController.updateState('settings', { entityId: { entityType: l.entityType, id: l.id }, entityName: l.name });
+      });
+    }
+  });
   cardEl.classList.toggle('ts-readonly', state.readOnly);
   footEl.hidden = false;
   var left = footEl.querySelector('.ts-foot-left');
@@ -793,7 +807,7 @@ function renderCalculations() {
 
 function openCalculation(p, plan) {
   var station = state.origin, label = calc.channelLabel(state.calcMeta, state.own, p.name);
-  var dr = ui.openDrawer(esc(t('settings.calculatedOne', 'Calculated measurement')), esc(station.name));
+  var dr = scopedDrawer(esc(t('settings.calculatedOne', 'Calculated measurement')));
   var intro = h('<p class="ts-calc-intro"></p>');
   var desc = calcDescription(p.name), inputs = calc.listText(calcInputs(p.name));
   intro.textContent = (desc ? desc + '. ' : '') + (p.reads.length > 1
@@ -988,10 +1002,21 @@ function resetScalar(d) {
     .then(function (ok) { if (ok) { commit({}, [d.key], d.label); } });
 }
 
+/** A side panel that names the entity its changes are saved on. */
+function scopedDrawer(titleHtml, subtitleHtml) {
+  var dr = ui.openDrawer(titleHtml, subtitleHtml);
+  var scope = h('<div class="ts-scope"><span></span><span class="ts-chip level"></span><b></b></div>');
+  scope.firstChild.textContent = state.readOnly ? t('settings.readOnly', 'Read only') : t('settings.savedOn', 'Saved on');
+  scope.querySelector('.ts-chip').textContent = kindName(state.origin.kind);
+  scope.querySelector('b').textContent = state.origin.name;
+  dr.el.insertBefore(scope, dr.body);
+  return dr;
+}
+
 // -- add ----------------------------------------------------------------------------
 
 function openAdd() {
-  var dr = ui.openDrawer(esc(t('settings.addSetting', 'Add setting')), esc(kindName(state.origin.kind) + ' · ' + state.origin.name));
+  var dr = scopedDrawer(esc(t('settings.addSetting', 'Add setting')));
   var tiles = h('<div class="ts-tiles"></div>');
   [['measurement', ICON.gauge, t('common.measurement', 'Measurement'), state.deviceBranch ? t('settings.tileDeviceMeasurement', 'Alarm limits on one of the device\'s own readings')
      : t('settings.tileMeasurement', 'Alarm thresholds or conditions, unit and hysteresis for one measurement')],
@@ -1008,7 +1033,7 @@ function openAdd() {
 
 function openMeasurementPicker(fromAdd) {
   if (state.deviceBranch) { openSourcePicker(fromAdd); return; }
-  var dr = ui.openDrawer(esc(t('settings.chooseMeasurement', 'Choose a measurement')), esc(t('settings.groupedByKind', 'Grouped by kind')));
+  var dr = scopedDrawer(esc(t('settings.chooseMeasurement', 'Choose a measurement')), esc(t('settings.groupedByKind', 'Grouped by kind')));
   if (fromAdd) { dr.onBack(openAdd); }
   var own = channelsWith(state.own);
   var measurable = {};
@@ -1038,7 +1063,7 @@ function openMeasurementPicker(fromAdd) {
 /** The device branch: pick one of the device's own source keys, the LOGR's
  * diagnostics included — they are what a device alarm is about. */
 function openSourcePicker(fromAdd) {
-  var dr = ui.openDrawer(esc(t('settings.chooseReading', 'Choose a reading')), esc(state.origin.name));
+  var dr = scopedDrawer(esc(t('settings.chooseReading', 'Choose a reading')));
   if (fromAdd) { dr.onBack(openAdd); }
   var own = channelsWith(state.own);
   var keys = state.sourceKeys.slice();
@@ -1053,7 +1078,7 @@ function openSourcePicker(fromAdd) {
 
 function openChannel(ch, fromAdd) {
   var cls = alarmClass(ch);
-  var dr = ui.openDrawer(esc(chLabel(ch)), esc(kindLabel(ch)) + ' · <span class="ts-mono">' + esc(ch) + '</span>');
+  var dr = scopedDrawer(esc(chLabel(ch)), esc(kindLabel(ch)) + ' · <span class="ts-mono">' + esc(ch) + '</span>');
   if (fromAdd) { dr.onBack(function () { openMeasurementPicker(true); }); }
   if (cls === 'numeric') { numericEditor(ch, dr); } else { conditionEditor(ch, dr, cls === 'boolean'); }
 }
@@ -1381,7 +1406,7 @@ function openScalar(section, fromAdd) {
     ? tb.listUsers(state.customerId).then(function (u) { state.users = u; }).catch(function () { state.users = []; })
     : Promise.resolve();
   ready.then(function () {
-    var dr = ui.openDrawer(esc(title), esc(kindName(state.origin.kind) + ' · ' + state.origin.name));
+    var dr = scopedDrawer(esc(title));
     if (fromAdd) { dr.onBack(openAdd); }
     var draft = {};
     pendingBook = {};

@@ -24,6 +24,7 @@ var EMPTY_MARKER = '(empty)';
 var TOPOLOGY_TYPE_RE = /^topology\.p(\d+)\.type$/;
 var SOURCE_KEY_RE = /^p(\d+)\.([a-z][A-Za-z0-9]*)(?:\.g(\d+))?(?:\.i(\d+))?$/;
 var NETWORK_KEYS = ['rssi', 'snr'];
+var SILENT_INTERVALS = 3;
 // Device bookkeeping, not readings: radio, uplink markers (uplinkCause: history before wire v3),
 // the dry contact interface's own counters.
 var NOT_READINGS = ['rssi', 'snr', 'uplinkTriggered', 'uplinkCause', 'uplinkLatest', 'dryc.drycRuleCount', 'dryc.drycRulesSynced'];
@@ -89,6 +90,26 @@ function sources(m) {
   Object.keys(m.latest).forEach(function (key) { if (!DRYC_FIELD.test(key)) { add(key.replace(/\.status$/, '')); } });
   Object.keys(m.faults).forEach(add);
   return Object.keys(out).map(function (k) { return out[k]; });
+}
+
+/** No reading for SILENT_INTERVALS of its interval, or of the base interval when it has none. */
+function silent(m, s) {
+  var iv = Number(s.interval) || Number(m.client['status.baseIntervalSeconds']) || 0;
+  return !!iv && Date.now() - ((m.latest[s.sourceKey] || {}).ts || 0) > SILENT_INTERVALS * iv * 1000;
+}
+
+/** A source an earlier peripheral at its position left behind: the device does not subscribe it, and the
+ * peripheral there now does not offer it or it went silent. Never position 0, the LOGR itself; undecided
+ * on a type the catalog lacks. */
+function fromEarlier(m, s, node) {
+  if (!s.position || s.enabled !== undefined || s.interval !== undefined || !node || !m.peripherals[node.type]) { return false; }
+  return !measureOf(m, s, node) || silent(m, s);
+}
+
+/** A measurement about the LOGR itself, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */
+function diagnostic(m, s, node) {
+  var x = measureOf(m, s, node);
+  return x ? !!(m.names[x.defaultName] || {}).diagnostic : s.position === 0;
 }
 
 function measureOf(m, s, node) {
@@ -206,16 +227,19 @@ function mappable(m, mapped) {
     }));
   }
   var nodes = topology(m);
-  return sources(m).sort(function (a, b) { return a.position - b.position || a.sourceKey.localeCompare(b.sourceKey); }).map(function (s) {
-    var node = nodes[s.position], p = node && m.peripherals[node.type];
-    var x = measureOf(m, s, node);
+  function late(s) { return fromEarlier(m, s, nodes[s.position]) ? 1 : 0; }
+  return sources(m).sort(function (a, b) { return a.position - b.position || late(a) - late(b) || a.sourceKey.localeCompare(b.sourceKey); }).map(function (s) {
+    var node = nodes[s.position], p = node && m.peripherals[node.type], earlier = fromEarlier(m, s, node);
+    var x = earlier ? null : measureOf(m, s, node);
     var name = x && m.names[x.defaultName] && !retiredName(m, x.defaultName) ? x.defaultName
       : namesForKind(m, s.kind, mapped).filter(function (n) { return !retiredName(m, n); })[0] || null;
     return {
-      key: s.sourceKey, label: sourceLabel(m, s, node), unit: unitOf(m, s), group: 'p' + s.position,
-      groupLabel: s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
+      key: s.sourceKey, label: sourceLabel(m, s, earlier ? null : node), unit: unitOf(m, s), group: 'p' + s.position + (earlier ? '.earlier' : ''),
+      groupLabel: earlier ? t('mapping.earlierAt', '{pos} · earlier peripheral', { pos: s.position })
+        : s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
         : s.position + ' · ' + (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral')),
-      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: s.position === 0 || !!(name && (m.names[name] || {}).diagnostic)
+      earlier: earlier,
+      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && (m.names[name] || {}).diagnostic)
     };
   }).filter(function (r) { return r.names.length && !DRYC_KEY.test(r.key); });
 }
@@ -322,7 +346,7 @@ function storeOne(entries, deviceId, key, from, target) {
 root.TerrySenseMapping = {
   SOURCE_KEY_RE: SOURCE_KEY_RE, NOT_READINGS: NOT_READINGS, RULE_SOURCE: RULE_SOURCE, DRYC_KEY: DRYC_KEY, DRYC_FIELD: DRYC_FIELD,
   LOGR2_SENSORS: LOGR2_SENSORS, NETWORK_KEYS: NETWORK_KEYS,
-  parseSource: parseSource, latestKeys: latestKeys, topology: topology, sources: sources, measureOf: measureOf,
+  parseSource: parseSource, latestKeys: latestKeys, topology: topology, sources: sources, silent: silent, fromEarlier: fromEarlier, diagnostic: diagnostic, measureOf: measureOf,
   sourceLabel: sourceLabel, unitOf: unitOf, readings: readings, nameOf: nameOf, entryOf: entryOf, labelOf: labelOf,
   readingUnit: readingUnit, logr2Parts: logr2Parts, mineOf: mineOf, othersOf: othersOf, mappedNames: mappedNames,
   namesForKind: namesForKind, namesForReading: namesForReading, mappable: mappable, channelLabel: channelLabel,
