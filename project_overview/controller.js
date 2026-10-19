@@ -720,21 +720,31 @@ function projectItems() {
   ];
 }
 
-/** *Export data…* (CA-24): every station's readings, retired ones too, over their whole history, as one ZIP. */
+/** *Export data…* (CA-24): every station's readings, retired ones too, over their whole history, as one ZIP;
+ * for the tenant, the entities' own settings too. */
 function openExport() {
   var e = state.entity, all = state.stations;
-  ui.confirm(t('overview.exportConfirm', 'Export the readings of every station of <b>{project}</b>, retired ones too, over their whole history? Keep this page open until the download starts.',
-    { project: esc(e.name) }), t('overview.exportGo', 'Export')).then(function (ok) {
-    if (!ok) { return null; }
-    var drawer = ui.openDrawer(esc(t('overview.exportTitle', 'Export data')), esc(e.name));
-    var line = drawer.body.appendChild(h('<p class="ts-proj-export"></p>'));
-    ui.drawerActions(drawer, '').hidden = true;
-    return exporter.build(e, state.projectAttrs, all.map(function (s) { return { station: s.station, attrs: s.attrs }; }), {
+  var drawer = ui.openDrawer(esc(t('overview.exportTitle', 'Export data')), esc(e.name));
+  var line = drawer.body.appendChild(h('<p class="ts-proj-export"></p>'));
+  line.textContent = t('overview.exportIntro', 'The readings of every station, retired ones too, over their whole history, with each channel\u2019s label and unit, in one ZIP. Keep this page open until the download starts.');
+  var withSettings = null;
+  if (state.me.authority === 'TENANT_ADMIN') {
+    var box = h('<label class="ts-switch"><input type="checkbox" data-f="settings"> <span></span></label>');
+    box.querySelector('span').textContent = t('overview.exportSettings', 'Include settings: thresholds, contacts, channel maps');
+    withSettings = box.querySelector('input');
+    drawer.body.appendChild(ui.tenantSection(box));
+  }
+  var go = ui.drawerActions(drawer, t('overview.exportGo', 'Export'));
+  go.addEventListener('click', function () {
+    go.hidden = true;
+    if (withSettings) { withSettings.disabled = true; }
+    exporter.build(e, state.projectAttrs, all.map(function (s) { return { station: s.station, attrs: s.attrs }; }), {
       meta: { names: state.names, kinds: state.kinds },
+      settings: !!withSettings && withSettings.checked,
       stopped: function () { return !drawer.el.isConnected; },
       progress: function (done, total, name) {
         line.textContent = done < total ? t('overview.exportStation', 'Station {i} of {n}: {name}', { i: done + 1, n: total, name: name })
-          : t('overview.exportZip', 'Packing the ZIP…');
+          : t('overview.exportZip', 'Packing the ZIP\u2026');
       }
     }).then(function (got) {
       if (!drawer.el.isConnected) { return; }
@@ -747,11 +757,11 @@ function openExport() {
       a.remove();
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
       ui.toast(t('overview.exported', 'Downloaded {file}', { file: got.fileName }));
+    }).catch(function (err) {
+      if (err && err.cancelled) { return; }
+      ui.closeDrawer();
+      ui.toast(t('overview.exportFailed', 'Export failed: {error}', { error: errText(err) }), 'error');
     });
-  }).catch(function (err) {
-    if (err && err.cancelled) { return; }
-    ui.closeDrawer();
-    ui.toast(t('overview.exportFailed', 'Export failed: {error}', { error: errText(err) }), 'error');
   });
 }
 

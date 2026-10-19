@@ -16,6 +16,11 @@ function field(v) {
   return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 
+/** `2026-10-19 12:30:00` in UTC, milliseconds only when set: a form spreadsheets read as a date. */
+function utc(ts) {
+  return new Date(ts).toISOString().replace('T', ' ').replace('.000Z', '').replace('Z', '');
+}
+
 /** `series` maps a channel to its points `[{ts, value}]`, `units` a channel to its unit: one row per timestamp, oldest first. */
 function toCsv(series, units) {
   var channels = Object.keys(series).sort();
@@ -23,9 +28,9 @@ function toCsv(series, units) {
   channels.forEach(function (c, i) {
     series[c].forEach(function (p) { (rows[p.ts] || (rows[p.ts] = []))[i] = p.value; });
   });
-  var lines = [['time'].concat(channels.map(function (c) { return units[c] ? c + ' [' + units[c] + ']' : c; })).map(field).join(',')];
+  var lines = [['time (UTC)'].concat(channels.map(function (c) { return units[c] ? c + ' [' + units[c] + ']' : c; })).map(field).join(',')];
   Object.keys(rows).map(Number).sort(function (a, b) { return a - b; }).forEach(function (ts) {
-    var cells = [new Date(ts).toISOString()];
+    var cells = [utc(ts)];
     for (var i = 0; i < channels.length; i++) { cells.push(field(rows[ts][i])); }
     lines.push(cells.join(','));
   });
@@ -63,6 +68,13 @@ function stationInfo(station, attrs, file, channels, meta) {
   return out;
 }
 
+/** An entity's own attributes, the resolver's `effective.*` left out: what a restore would write back. */
+function ownAttrs(attrs) {
+  var out = {};
+  Object.keys(attrs || {}).sort().forEach(function (k) { if (k.indexOf('effective.') !== 0) { out[k] = attrs[k]; } });
+  return out;
+}
+
 function loadZip() {
   if (root.JSZip) { return Promise.resolve(root.JSZip); }
   return new Promise(function (resolve, reject) {
@@ -92,10 +104,10 @@ root.TerrySenseExport = function (get) {
   }
 
   /** `project` with its attributes, `stations` `[{station, attrs}]`; `opts.meta` the vocabulary `{names, kinds}`,
-   * `opts.progress(done, total, name)`, `opts.stopped()` true to cancel. Resolves path to text, under one folder named after the project. */
+   * `opts.settings` true to add `settings.json` (tenant only), `opts.progress(done, total, name)`, `opts.stopped()` true to cancel. Resolves path to text, under one folder named after the project. */
   function collect(project, projectAttrs, stations, opts) {
     var now = Date.now(), taken = {}, folder = fileName(project.name, {}) + '/';
-    var files = {}, infos = [];
+    var files = {}, infos = [], settings = [];
     var stopped = opts.stopped || function () { return false; };
     var meta = opts.meta || { names: {}, kinds: {} };
     var work = Promise.resolve();
@@ -116,12 +128,16 @@ root.TerrySenseExport = function (get) {
           Object.keys(info.channels).forEach(function (c) { units[c] = info.channels[c].unit; });
           files[folder + file] = toCsv(series, units);
           infos.push(info);
+          settings.push({ name: s.station.name, file: file, attributes: ownAttrs(s.attrs) });
         });
       });
     });
     return work.then(function () {
       files[folder + 'project.json'] = JSON.stringify({ project: project.name, perimeter: parseJson(projectAttrs.perimeter),
         exportedAt: new Date(now).toISOString(), stations: infos }, null, 2) + '\n';
+      if (opts.settings) {
+        files[folder + 'settings.json'] = JSON.stringify({ project: ownAttrs(projectAttrs), stations: settings }, null, 2) + '\n';
+      }
       if (opts.progress) { opts.progress(stations.length, stations.length, ''); }
       return files;
     });
