@@ -239,6 +239,8 @@ var COLUMNS = {
   customer: { dir: 1, cell: 'ts-fleet-cust', width: 'minmax(110px, 1fr)', value: function (d) { return d.customer ? d.customer.toLowerCase() : null; } },
   uplink: { dir: -1, cell: 'ts-fleet-up', width: '120px', value: function (d) { return lastTs(d) || null; } },
   place: { dir: 1, cell: 'ts-fleet-place', width: 'minmax(180px, 2.4fr)', value: function (d) { return d.stations && d.stations.length ? d.stations[0].toLowerCase() : null; } },
+  // Not a column of its own: the second sorter in the station · project header.
+  project: { dir: 1, value: function (d) { return d.projects && d.projects.length ? d.projects[0].name.toLowerCase() : null; } },
   battery: { dir: 1, cell: 'ts-fleet-bat', width: '76px', value: function (d) { var b = battery(d); return b && b.pct !== null ? b.pct : null; } },
   sensors: { dir: 1, cell: 'ts-fleet-sens', width: 'minmax(110px, 1.2fr)', value: function (d) { return d.sensors && d.sensors.length ? codes(d).join(' ') : null; } },
   versions: { dir: 1, cell: 'ts-fleet-ver', width: 'minmax(120px, 1fr)', value: function (d) { var v = version(d, 'deviceInfo.hwVersion', 'register.hwVersion'); return v ? String(v.value) : null; } },
@@ -473,19 +475,26 @@ function render() {
   var tagged = Object.keys(state.tags.sensor).length + Object.keys(state.tags.project).length;
   if (!list.length) { fail(state.search || state.filter !== 'all' || tagged ? t('fleet.noMatch', 'No device matches.') : t('fleet.none', 'No device here yet.')); return; }
   var logr = state.group === 'logr';
-  if (columnsOf(logr).indexOf(state.sort) < 0) { state.sort = 'uplink'; state.dir = -1; return render(); }
+  if (columnsOf(logr).concat('project').indexOf(state.sort) < 0) { state.sort = 'uplink'; state.dir = -1; return render(); }
   var table = h('<div class="ts-fleet-list"><div class="ts-fleet-row ts-fleet-headrow"></div></div>');
   table.style.setProperty('--ts-fleet-cols', columnsOf(logr).map(function (id) { return COLUMNS[id].width; }).join(' '));
   var head = table.firstChild, labels = columnLabels();
-  columnsOf(logr).forEach(function (id) {
+  function sorter(parent, id, label) {
     var on = state.sort === id;
-    var b = head.appendChild(h('<button type="button" class="ts-fleet-sorter" data-sort="' + id + '"></button>'));
-    b.textContent = labels[id] + (on ? (state.dir > 0 ? ' ▲' : ' ▼') : '');
+    var b = parent.appendChild(h('<button type="button" class="ts-fleet-sorter" data-sort="' + id + '"></button>'));
+    b.textContent = label + (on ? (state.dir > 0 ? ' ▲' : ' ▼') : '');
     if (on) { b.classList.add('on'); }
     b.addEventListener('click', function () {
       if (on) { state.dir = -state.dir; } else { state.sort = id; state.dir = COLUMNS[id].dir; }
       render();
     });
+  }
+  columnsOf(logr).forEach(function (id) {
+    if (id !== 'place') { sorter(head, id, labels[id]); return; }
+    var cell = head.appendChild(h('<span class="ts-fleet-sorters"></span>'));
+    sorter(cell, 'place', t('common.station', 'Station'));
+    cell.appendChild(document.createTextNode(' · '));
+    sorter(cell, 'project', t('common.project', 'Project'));
   });
   list.forEach(function (d) { table.appendChild(row(d, logr)); });
   bodyEl.appendChild(table);
@@ -597,26 +606,57 @@ function renderAlarms() {
   wc.textContent = G.severity(all[0].a.severity.toLowerCase()).label;
   var list = alarmsEl.querySelector('.ts-fleet-alarms-list');
   list.innerHTML = '';
-  all.forEach(function (x) {
+  // The fleet's search narrows the alarms too: by type or device.
+  var q = state.search.trim().toLowerCase();
+  var shown = all.filter(function (x) { return !q || [x.a.type, x.d.name, x.d.label].some(function (s) { return s && String(s).toLowerCase().indexOf(q) >= 0; }); });
+  var unacked = shown.filter(function (x) { return !/_ACK$/.test(x.a.status); });
+  if (state.writable && shown.length > 1) {
+    var bulk = list.appendChild(h('<div class="ts-fleet-alarm-bulk"><span class="ts-spacer"></span></div>'));
+    if (unacked.length > 1) {
+      bulk.appendChild(h('<button type="button" class="ts-btn ghost sm" data-a="ack-all"></button>')).textContent = t('fleet.ackAll', 'Acknowledge all {n}', { n: unacked.length });
+      bulk.lastChild.addEventListener('click', function () { allAlarms(unacked, 'ack'); });
+    }
+    bulk.appendChild(h('<button type="button" class="ts-btn ghost sm" data-a="clear-all"></button>')).textContent = t('fleet.clearAll', 'Clear all {n}', { n: shown.length });
+    bulk.lastChild.addEventListener('click', function () { allAlarms(shown, 'clear'); });
+  }
+  shown.forEach(function (x) {
     var row = list.appendChild(h('<div class="ts-fleet-alarm"><span class="ts-chip ts-fleet-sev"></span><span class="ts-fleet-alarm-type"></span>' +
-      '<button type="button" class="ts-btn ghost sm" data-a="alarm-device"></button><span class="ts-row-meta"></span><span class="ts-spacer"></span></div>'));
+      '<button type="button" class="ts-btn ghost sm" data-a="alarm-device"></button><span class="ts-row-meta"></span><span class="ts-fleet-alarm-status"></span>' +
+      '<span class="ts-spacer"></span><button type="button" class="ts-btn ghost sm" data-a="alarm-open"></button></div>'));
     row.setAttribute('data-alarm', x.a.type);
     row.firstChild.style.setProperty('--sev', 'var(--sev-' + x.a.severity.toLowerCase() + ')');
     row.firstChild.textContent = G.severity(x.a.severity.toLowerCase()).label;
     row.querySelector('.ts-fleet-alarm-type').textContent = x.a.type;
     row.querySelector('[data-a=alarm-device]').textContent = x.d.name;
     row.querySelector('[data-a=alarm-device]').addEventListener('click', function () { openPane(x.d); });
-    row.querySelector('.ts-row-meta').textContent = x.a.createdTime ? t.ago(x.a.createdTime) : '';
+    var since = row.querySelector('.ts-row-meta');
+    since.textContent = x.a.createdTime ? t.ago(x.a.createdTime) : '';
+    if (x.a.createdTime) { since.title = fmtTime(x.a.createdTime); }
+    var status = row.querySelector('.ts-fleet-alarm-status');
+    status.setAttribute('data-status', x.a.status || '');
+    if (/_ACK$/.test(x.a.status)) { status.appendChild(h('<span class="ts-chip"></span>')).textContent = t('station.acknowledged', 'Acknowledged'); }
+    row.querySelector('[data-a=alarm-open]').textContent = t('fleet.deviceView', 'Device view');
+    row.querySelector('[data-a=alarm-open]').addEventListener('click', function () { openDevice(x.d); });
     if (state.writable) { row.appendChild(alarmActions(x.a)); }
   });
+  if (!shown.length) { list.appendChild(h('<div class="ts-row-meta"></div>')).textContent = t('fleet.noAlarmMatch', 'No alarm matches the search.'); }
+}
+
+/** *Acknowledge* or *Clear* every listed alarm, confirmed first. */
+function allAlarms(list, op) {
+  ui.confirm(op === 'ack' ? t('fleet.ackAllConfirm', 'Acknowledge {n} alarms?', { n: list.length })
+    : t('fleet.clearAllConfirm', 'Clear {n} alarms? Those whose condition still holds are raised again by the next reading.', { n: list.length }),
+  op === 'ack' ? t('station.acknowledge', 'Acknowledge') : t('station.clear', 'Clear')).then(function (ok) {
+    if (!ok) { return null; }
+    return list.reduce(function (p, x) { return p.then(function () { return op === 'ack' ? tb.ackAlarm(x.a) : tb.clearAlarm(x.a); }); }, Promise.resolve())
+      .then(function () { ui.toast(op === 'ack' ? t('station.alarmAcknowledged', 'Alarm acknowledged') : t('station.alarmCleared', 'Alarm cleared')); return refresh(); });
+  }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
 }
 
 /** *Acknowledge* and *Clear* on one alarm, in the station view's words. */
 function alarmActions(a) {
   var el = h('<span class="ts-fleet-alarm-acts"></span>');
-  if (/_ACK$/.test(a.status)) {
-    el.appendChild(h('<span class="ts-row-meta"></span>')).textContent = t('station.acknowledged', 'Acknowledged');
-  } else {
+  if (!/_ACK$/.test(a.status)) {
     el.appendChild(h('<button type="button" class="ts-btn ghost sm" data-a="ack"></button>')).textContent = t('station.acknowledge', 'Acknowledge');
     el.lastChild.addEventListener('click', function () {
       tb.ackAlarm(a).then(function () { ui.toast(t('station.alarmAcknowledged', 'Alarm acknowledged')); return refresh(); })

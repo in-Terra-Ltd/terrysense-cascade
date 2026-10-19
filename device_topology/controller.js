@@ -1703,7 +1703,13 @@ function group(id, folded) {
       if (attr) { c.setAttribute(attr[0], attr[1]); }
       return c;
     },
-    /** A tool at the foot of the *Configure*: add a measurement, delete a sensor's data. */
+    /** A tool on the header itself, one click from first sight: a LOGR2 sensor's *Delete data*. */
+    act: function (html, fn) {
+      var b = head.querySelector('.ts-mgroup-acts').appendChild(h(html));
+      b.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); fn(); });
+      return b;
+    },
+    /** A tool at the foot of the *Configure*: add a measurement. */
     confAct: function (html, fn) {
       var foot = confBody.querySelector('.ts-mconf-foot') || confBody.appendChild(h('<div class="ts-mconf-foot"></div>'));
       var b = foot.appendChild(h(html));
@@ -2085,7 +2091,7 @@ function partGroup(part, logr2) {
   g.name(part.label || t('mapping.logrItself', 'LOGR itself'));
   g.mono('');
   if (LOGR2_SENSORS[part.id] && state.writable) {
-    g.confAct('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteSensorData(part); });
+    g.act('<button type="button" class="ts-btn danger" data-a="delete-data">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () { deleteSensorData(part); });
   }
   if (part.id === 'dryc') { g.add(drycRow('dryc.', null, false)); return g; }
   part.keys.slice().sort(function (a, b) { return labelOf(a).localeCompare(labelOf(b)); })

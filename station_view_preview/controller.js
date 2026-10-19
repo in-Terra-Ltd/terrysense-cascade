@@ -2,8 +2,7 @@
  * Station — one station as a data flow: each device that feeds it, the
  * measurements the device provides, the channel each is stored under, and the
  * station's latest value of each, by label; source and channel keys behind
- * *Show keys*, a switch for a user who may write the station, remembered per
- * user, and in each node's tooltip; then the calculated channels, each from the
+ * *Show keys*, a switch remembered per user, and in each node's tooltip; then the calculated channels, each from the
  * station channels and the `calc.*` settings it reads (vocabulary.md §4), with the channels gone stale; the project
  * the station stands in above. A device opens its device view. A user who may
  * write the station changes the channel a measurement is stored under, or its
@@ -382,12 +381,10 @@ function renderChannels() {
     '<div class="ts-flow-cols"><span>' + esc(t('common.device', 'Device')) + '</span><span></span><span>' + esc(t('common.measurement', 'Measurement')) +
     '</span><span></span><span>' + esc(t('station.colChannel', 'Channel')) + '</span><span></span><span>' + esc(t('station.colValue', 'Station value')) + '</span></div></div>'));
   sec.classList.toggle('keys', keys);
-  if (state.canWrite) {
-    var sw = sec.firstChild.appendChild(h('<label class="ts-switch ts-flow-keys"><input type="checkbox" data-a="show-keys"><span></span></label>'));
-    sw.querySelector('span').textContent = t('station.showKeys', 'Show keys');
-    sw.querySelector('input').checked = keys;
-    sw.querySelector('input').addEventListener('change', function (e) { memo.set('keys', e.target.checked); renderChannels(); });
-  }
+  var sw = sec.firstChild.appendChild(h('<label class="ts-switch ts-flow-keys"><input type="checkbox" data-a="show-keys"><span></span></label>'));
+  sw.querySelector('span').textContent = t('station.showKeys', 'Show keys');
+  sw.querySelector('input').checked = keys;
+  sw.querySelector('input').addEventListener('change', function (e) { memo.set('keys', e.target.checked); renderChannels(); });
   var lanes = flowLanes(), hidden = 0;
   lanes.forEach(function (lane) {
     var shown = lane.items.filter(function (it) { return state.showDiagnostic || !folded(it); });
@@ -432,8 +429,8 @@ function renderChannels() {
   }
 }
 
-/** Source and channel keys in the flow: a writer's choice, remembered; a reader finds them in the tooltips. */
-function showKeys() { return state.canWrite && memo.get('keys'); }
+/** Source and channel keys in the flow: each reader's choice, remembered. */
+function showKeys() { return memo.get('keys'); }
 
 /** The channels in the order the flow draws them. */
 function flowOrder(lanes) {
