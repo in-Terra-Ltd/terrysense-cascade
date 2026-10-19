@@ -2602,10 +2602,11 @@ function commandsCard() {
 var MIN_UPLINK_S = 60, UPLINK_STEP_S = 5;
 function maxUplinkS() { return Number(state.client.wireVersion) === 3 ? 65535 * UPLINK_STEP_S : 65535; }
 
-/** The longest gap between transmissions in s, from the subscriptions and the periodic
- * link check the device reports (TRX_NANO.md §12.0): `s`, null when it has no bound, and
- * `data`, the bound of the measurements sent every time, null without one. The ingest chain
- * computes the same for the inactivity timeout (HEALTH.md §1). */
+/** The longest gap between transmissions in s, from the subscriptions the device reports
+ * and its daily link check (TRX_NANO.md §12.0): `s`, and `data`, the bound of the
+ * measurements sent every time, null without one. The ingest chain computes the same for
+ * the inactivity timeout (HEALTH.md §1). */
+var LINKCHECK_S = 86400;
 function txGap(uplink) {
   var subs = {}, c = state.client;
   Object.keys(c).forEach(function (key) {
@@ -2613,16 +2614,14 @@ function txGap(uplink) {
     if (m) { (subs[m[1]] = subs[m[1]] || {})[m[2]] = c[key]; }
   });
   if (!Object.keys(subs).length) { return { s: uplink, data: null }; }
-  var lo = 0, daily = false;
+  var lo = 0;
   Object.keys(subs).forEach(function (k) {
-    var x = subs[k], iv = Number(x.interval), send = x.send || 'all';
+    var x = subs[k], iv = Number(x.interval);
     if (x.enabled === false || x.enabled === 'false') { return; }
-    if (send === 'all' && iv > 0 && (!lo || iv < lo)) { lo = iv; }
-    if (send === 'events_daily') { daily = true; }
+    if ((x.send || 'all') === 'all' && iv > 0 && (!lo || iv < lo)) { lo = iv; }
   });
-  var d = lo ? uplink * Math.ceil(lo / uplink) : daily ? uplink * Math.ceil(86400 / uplink) : null;
-  var lc = Number(c['status.linkCheckIntervalSeconds']) > 0 ? uplink * Math.ceil(Number(c['status.linkCheckIntervalSeconds']) / uplink) : 0;
-  return { s: d === null ? (lc || null) : (lc ? Math.min(d, lc) : d), data: lo ? d : null };
+  var d = lo ? uplink * Math.ceil(lo / uplink) : null, lc = uplink * Math.ceil(LINKCHECK_S / uplink);
+  return { s: d === null ? lc : Math.min(d, lc), data: d };
 }
 
 /** The base uplink interval with its unit and *Set*, beside the other device-wide commands:
