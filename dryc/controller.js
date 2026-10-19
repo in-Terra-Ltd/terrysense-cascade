@@ -571,6 +571,9 @@ function wiringStep() {
   var sec = step(1, t('dryc.wiring', 'Inputs and relays'), canEdit()
     ? t('dryc.wiringHint', 'Name each input wired on site, and what its on and off states mean. A named input is recorded on the station; an unnamed one is not used.')
     : t('dryc.wiringHintRead', 'The inputs wired on site and the relays, with their last state.'));
+  // The inputs at a glance lead the step (DRYC.md §8); the tiles below name and edit them.
+  var glance = window.TerrySenseDrycGlance(state.live, '', state.rules.inputs);
+  if (glance) { sec.appendChild(h('<div class="ts-dryc-lead"></div>')).appendChild(glance); }
   var grid = sec.appendChild(h('<div class="ts-live"></div>'));
   var outs = sec.appendChild(h('<div class="ts-live ts-outs"></div>'));
   for (var i = 0; i < INPUTS; i++) {
