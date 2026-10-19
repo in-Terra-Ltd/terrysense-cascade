@@ -545,6 +545,10 @@ function deviceNode(el, d) {
   if (d.client['status.soc'] !== undefined && d.client['status.soc'] !== 'unknown' && (parseJson(d.client['status.healthFaults']) || []).indexOf('POWERBOARD') < 0) {
     el.appendChild(h('<div class="ts-flow-line"></div>')).textContent = t('station.battery', 'Battery {soc} %', { soc: fmtNumber(Number(d.client['status.soc'])) });
   }
+  // A device with a DRYC: its inputs as circles with the status's age (DRYC.md §8), named by this station's rule set.
+  var dryc = Object.keys(d.model.latest).map(function (k) { return /^(dryc\.|p\d+\.)drycInput\d$/.exec(k); }).filter(Boolean)[0];
+  var glance = dryc && window.TerrySenseDrycGlance(d.model.latest, dryc[1], (parseJson(state.attrs['dryc.rules']) || {}).inputs);
+  if (glance) { el.appendChild(h('<div class="ts-flow-line ts-flow-dryc"></div>')).appendChild(glance); }
   var sev = worst(d.alarms.map(function (a) { return a.severity; }));
   if (sev) {
     el.appendChild(h('<div class="ts-flow-line ts-stv-bad"></div>')).textContent =

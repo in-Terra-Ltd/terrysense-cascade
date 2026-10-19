@@ -1512,10 +1512,13 @@ function tile(id, label, value, sub, level) {
 function reportingTile() {
   var last = state.server.lastActivityTime, fam = family();
   var every = fam === 'bus' ? Number(state.client['status.baseIntervalSeconds']) : Number(state.server['register.intervalSeconds']);
-  var n = fam === 'bus' ? sources().filter(function (s) { return subscribed(s) && !(s.enabled === false || s.enabled === 'false'); }).length : readings().length;
+  var subs = fam === 'bus' ? sources().filter(subscribed) : null;
+  var n = subs ? subs.filter(function (s) { return !(s.enabled === false || s.enabled === 'false'); }).length : readings().length;
   var value = every > 0 ? t('device.everyDuration', 'every {d}', { d: fmtDuration(every) })
     : fam === 'bus' ? t('device.notReported', 'Not reported') : t('device.intervalNotSet', 'interval not set');
-  var sub = [n === 1 ? t('device.measurementOne', '1 measurement') : t('device.measurementMany', '{n} measurements', { n: n }),
+  // A LOGR whose SUBSCRIPTIONS report never arrived names no subscription: that says nothing of what it measures.
+  var sub = [subs && !subs.length ? t('device.noSubscriptionsReport', 'no report yet')
+    : n === 1 ? t('device.measurementOne', '1 measurement') : t('device.measurementMany', '{n} measurements', { n: n }),
     last ? t('device.lastUplinkAgo', 'last uplink {ago}', { ago: t.ago(last) }) : t('device.noUplinkYet', 'no uplink yet')].join(' · ');
   return tile('reporting', t('device.statReporting', 'Reporting'), value, sub);
 }
@@ -2000,7 +2003,7 @@ function drycCells(row, prefix, pos) {
     }
     return out.length ? out.join(', ') : t('common.none', 'none');
   }
-  var parts = [t('device.drycInputsOn', 'Inputs on: {list}', { list: on('drycInput', 8) }), t('device.drycRelaysOn', 'Relays on: {list}', { list: on('drycOutput', 2) })];
+  var parts = [t('device.drycRelaysOn', 'Relays on: {list}', { list: on('drycOutput', 2) })];
   var volt = lat[prefix + 'drycVoltage'];
   if (volt) {
     ts = Math.max(ts, volt.ts);
@@ -2008,6 +2011,9 @@ function drycCells(row, prefix, pos) {
   }
   var cell = row.querySelector('.ts-mc-latest');
   cell.innerHTML = '';
+  // The inputs as circles with the status's age (DRYC.md §8), named as the station holding the rules names them.
+  var glance = window.TerrySenseDrycGlance(lat, prefix, (drycRules() || {}).inputs);
+  if (glance) { cell.appendChild(h('<div class="ts-dryc-line"></div>')).appendChild(glance); ts = 0; }
   cell.appendChild(h('<div class="ts-dryc-line"></div>')).textContent = parts.join(' · ');
   var sync = null;
   if (pos !== null) {
@@ -2026,6 +2032,11 @@ function drycCells(row, prefix, pos) {
   if (ts) { cell.appendChild(h('<div class="ts-row-meta"></div>')).textContent = t.ago(ts); }
   drycLink(cell.appendChild(h('<div class="ts-dryc-link"></div>')));
   return !!sync && sync.cls === 'fault';
+}
+
+/** The rule set of the station holding this device's DRYC rules, or null (DRYC.md §1). */
+function drycRules() {
+  return state.bindings.map(function (b) { return parseJson(b.attrs['dryc.rules']); }).filter(Boolean)[0] || null;
 }
 
 /** The DRYC's row when no subscribed status carries it: a LOGR2's, or a LOGR4's before its SUBSCRIPTIONS report. */
