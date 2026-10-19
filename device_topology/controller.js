@@ -2620,7 +2620,7 @@ function txGap(uplink) {
     if (send === 'all' && iv > 0 && (!lo || iv < lo)) { lo = iv; }
     if (send === 'events_daily') { daily = true; }
   });
-  var d = lo ? uplink * Math.ceil(lo / uplink) : daily ? 86400 : null;
+  var d = lo ? uplink * Math.ceil(lo / uplink) : daily ? uplink * Math.ceil(86400 / uplink) : null;
   var lc = Number(c['status.linkCheckIntervalSeconds']) > 0 ? uplink * Math.ceil(Number(c['status.linkCheckIntervalSeconds']) / uplink) : 0;
   return { s: d === null ? (lc || null) : (lc ? Math.min(d, lc) : d), data: lo ? d : null };
 }
