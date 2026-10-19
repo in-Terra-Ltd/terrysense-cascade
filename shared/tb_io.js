@@ -338,10 +338,8 @@ root.TerrySenseTbIo = function (ctx) {
     var params = stateId ? { state: encodeState(viewStates(stateId, entity, extra)) } : {};
     var publicId = isPublic && new URLSearchParams(window.location.search).get('publicId');
     if (publicId) { params.publicId = publicId; }
-    var router = getService('router'), target = [isPublic ? '/dashboard' : '/dashboards', dashboardId];
-    if (isPublic || window.location.pathname.indexOf(dashboardId) >= 0) { router.navigate(target, { queryParams: params }); return; }
-    // ThingsBoard builds another dashboard's page anew only from another route, as from its list; a reused page loses the edit button.
-    router.navigateByUrl('/dashboards', { skipLocationChange: true }).then(function () { router.navigate(target, { queryParams: params }); });
+    // On PE the edit rights come from the dashboard's group: its *All* group, as the dashboard list opens it.
+    getService('router').navigate(isPublic ? ['/dashboard', dashboardId] : ['/dashboards', 'all', dashboardId], { queryParams: params });
   }
 
   /** A project's name leads to its project dashboard, a station's to its

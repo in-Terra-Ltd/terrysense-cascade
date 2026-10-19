@@ -6,7 +6,7 @@
  * one, creates one from the station's channels (shared/templates.js), places and removes a station's position
  * and draws the project area, adds a station; the row menus of the project
  * and its stations rename, move, make public or private, retire and delete
- * (shared/lifecycle.js). Retired stations fold away at the end of the list.
+ * (shared/lifecycle.js); the project's menu also exports its data (shared/export.js). Retired stations fold away at the end of the list.
  * Widget: logr-product-docs/cloud/FRONTEND.md *Projects dashboard*.
  *
  * `opts`, set by build_project_dashboard.py: `projectDashboardId` (its
@@ -15,7 +15,7 @@
  *
  * `opts.devicesDashboardId`, the fleet, for the follow-up of a new station.
  *
- * Loads after shared/i18n.js, resolver.js, glossary.js, ui.js, tb_io.js, calculations.js, lifecycle.js and templates.js; loads
+ * Loads after shared/i18n.js, resolver.js, glossary.js, ui.js, tb_io.js, calculations.js, lifecycle.js, templates.js and export.js; loads
  * Leaflet, Leaflet.markercluster and Leaflet-Geoman itself.
  */
 
@@ -31,6 +31,7 @@ var ui = window.TerrySenseUi(root);
 var calc = window.TerrySenseCalculations(ui, tb);
 var life = window.TerrySenseLifecycle(ui, tb);
 var templates = window.TerrySenseTemplates(ui, tb);
+var exporter = window.TerrySenseExport(tb.get);
 var h = ui.h, esc = ui.esc, ICON = ui.ICON;
 
 var REFRESH_MS = 60000;
@@ -712,10 +713,56 @@ function projectItems() {
     state.canCreateDashboards && { a: 'create-home', label: t('overview.createHome', 'Create project dashboard…'), run: function () { openCreateHome(); } },
     state.pub && state.pubDash && { a: on ? 'link-off' : 'link-on', label: on ? t('overview.linkOff', 'Public link off') : t('overview.linkOn', 'Public link on'), run: function () { setPublicLink(!on); } },
     on && { a: 'copy-link', label: t('overview.copyLink', 'Copy link'), run: copyLink },
+    state.stations.length && { a: 'export', label: t('overview.export', 'Export data…'), run: openExport },
     !active().length && { a: 'delete', label: t('overview.delete', 'Delete\u2026'), danger: true, run: function () {
       life.remove(e, retiredOnes().map(function (s) { return s.station; }), function () { openDashboard(opts.projectDashboardId); });
     } }
   ];
+}
+
+/** *Export data…* (CA-24): every station's readings, retired ones too, over their whole history, as one ZIP;
+ * for the tenant, the entities' own settings too. */
+function openExport() {
+  var e = state.entity, all = state.stations;
+  var drawer = ui.openDrawer(esc(t('overview.exportTitle', 'Export data')), esc(e.name));
+  var line = drawer.body.appendChild(h('<p class="ts-proj-export"></p>'));
+  line.textContent = t('overview.exportIntro', 'The readings of every station, retired ones too, over their whole history, with each channel\u2019s label and unit, in one ZIP. Keep this page open until the download starts.');
+  var withSettings = null;
+  if (state.me.authority === 'TENANT_ADMIN') {
+    var box = h('<label class="ts-switch"><input type="checkbox" data-f="settings"> <span></span></label>');
+    box.querySelector('span').textContent = t('overview.exportSettings', 'Include settings: thresholds, contacts, channel maps');
+    withSettings = box.querySelector('input');
+    drawer.body.appendChild(ui.tenantSection(box));
+  }
+  var go = ui.drawerActions(drawer, t('overview.exportGo', 'Export'));
+  go.addEventListener('click', function () {
+    go.hidden = true;
+    if (withSettings) { withSettings.disabled = true; }
+    exporter.build(e, state.projectAttrs, all.map(function (s) { return { station: s.station, attrs: s.attrs }; }), {
+      meta: { names: state.names, kinds: state.kinds },
+      settings: !!withSettings && withSettings.checked,
+      stopped: function () { return !drawer.el.isConnected; },
+      progress: function (done, total, name) {
+        line.textContent = done < total ? t('overview.exportStation', 'Station {i} of {n}: {name}', { i: done + 1, n: total, name: name })
+          : t('overview.exportZip', 'Packing the ZIP\u2026');
+      }
+    }).then(function (got) {
+      if (!drawer.el.isConnected) { return; }
+      ui.closeDrawer();
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(got.blob);
+      a.download = got.fileName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 60000);
+      ui.toast(t('overview.exported', 'Downloaded {file}', { file: got.fileName }));
+    }).catch(function (err) {
+      if (err && err.cancelled) { return; }
+      ui.closeDrawer();
+      ui.toast(t('overview.exportFailed', 'Export failed: {error}', { error: errText(err) }), 'error');
+    });
+  });
 }
 
 function names(stations) { return stations.map(function (s) { return '<b>' + esc(s.name) + '</b>'; }).join(', '); }
