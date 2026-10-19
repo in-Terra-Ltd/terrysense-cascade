@@ -24,13 +24,14 @@ root.TerrySenseTemplates = function (ui, tb) {
   var BY_ALARM = { numeric: 'line', boolean: 'state', state: 'state' };
   var ALARMS_FQN = 'system.alarm_widgets.alarms_table';
   var MAP_FQN = 'system.map';
+  var PROJECT_VIEW = 'project';
   var TABLE_FQN = 'system.cards.entities_table';
   var NAV_FQN = 'tenant.terrysense.navigation';
   var HOME_LINKS = ['projects', 'installation', 'settings', 'deleteHome'];
   var HOME_GROUP = 'Project home dashboards';
   var HOME_KEY = 'config.homeDashboard';
   // Fixed texts ThingsBoard already translates, by its own keys (I18N.md §2).
-  var TB_TEXT = { alarms: '{i18n:alarm.alarms}', latest: '{i18n:widget.latest}', off: '{i18n:widgets.status-widget.off}', on: '{i18n:widgets.status-widget.on}' };
+  var TB_TEXT = { off: '{i18n:widgets.status-widget.off}', on: '{i18n:widgets.status-widget.on}' };
 
   function uuid() {
     if (root.crypto && root.crypto.randomUUID) { return root.crypto.randomUUID(); }
@@ -105,17 +106,24 @@ root.TerrySenseTemplates = function (ui, tb) {
     });
   }
 
-  /** The model widget of each chart, by its title, and the station alias they bind. */
+  /** The model widget of each chart, by its title, and the station alias they bind; `project`, the
+   * "project" view a project dashboard copies: its `layout`, `grid` and the stations `alias` its widgets bind. */
   function modelsOf(dashboard) {
     var conf = dashboard.configuration, out = { ids: {} };
+    var view = conf.states[PROJECT_VIEW], inView = view ? view.layouts.main.widgets : {};
     Object.keys(conf.widgets).forEach(function (id) {
+      if (inView[id]) { return; }
       var title = (conf.widgets[id].config || {}).title;
       if (CHARTS[title]) { out.ids[title] = id; }
       if (conf.widgets[id].typeFullFqn === ALARMS_FQN) { out.alarms = id; }
-      if (conf.widgets[id].typeFullFqn === TABLE_FQN) { out.table = id; }
       if (conf.widgets[id].typeFullFqn === NAV_FQN) { out.nav = id; }
     });
     out.alias = stationAlias(conf);
+    if (view) {
+      var text = JSON.stringify(Object.keys(inView).map(function (id) { return conf.widgets[id]; }));
+      out.project = { layout: inView, grid: view.layouts.main.gridSettings,
+        alias: Object.keys(conf.entityAliases).filter(function (k) { return text.indexOf(k) >= 0; })[0] };
+    }
     return out;
   }
 
@@ -405,23 +413,6 @@ root.TerrySenseTemplates = function (ui, tb) {
     });
   }
 
-  /** The stock map, one marker per station of alias `alias` at its `latitude` / `longitude`. */
-  function mapWidget(stock, alias, title) {
-    var conf = JSON.parse(stock.descriptor.defaultConfig);
-    var marker = Object.assign(conf.settings.markers[0], {
-      dsType: 'entity', dsLabel: '', dsEntityAliasId: alias, dsDeviceId: null, dsFilterId: null, additionalDataKeys: [],
-      xKey: { name: 'latitude', label: 'latitude', type: 'attribute', settings: {}, color: '#2196f3' },
-      yKey: { name: 'longitude', label: 'longitude', type: 'attribute', settings: {}, color: '#2196f3' },
-      label: { show: true, type: 'pattern', pattern: '${entityName}' },
-      click: { type: 'doNothing' }, markerType: 'shape'
-    });
-    marker.tooltip = Object.assign(marker.tooltip || {}, { show: false });
-    conf.settings.markers = [marker];
-    conf.datasources = [];
-    conf.title = title;
-    return { id: uuid(), typeFullFqn: MAP_FQN, type: stock.descriptor.type, sizeX: 24, sizeY: 10, config: conf };
-  }
-
   /** The models' navigation bar, bound to `alias`, with the links of a project
    * dashboard; build_project_dashboard.py keeps it current. */
   function navWidget(models, alias) {
@@ -534,18 +525,11 @@ root.TerrySenseTemplates = function (ui, tb) {
     return w;
   }
 
-  /** The latest value of each of `keys`, one row per station of alias `alias`. */
-  function tableWidget(models, cat, keys, alias) {
-    var w = JSON.parse(JSON.stringify(models.dashboard.configuration.widgets[models.table]));
-    var ds = w.config.datasources[0];
-    w.id = uuid();
-    delete ds.filterId;
-    ds.entityAliasId = alias;
-    ds.dataKeys = [ds.dataKeys[0]].concat(keys.map(function (k) { return tableKey(cat.by[k]); }));
-    w.config.actions = {};
-    w.config.title = TB_TEXT.latest;
-    Object.assign(w.config.settings, { entitiesTitle: TB_TEXT.latest, displayEntityLabel: false, displayEntityType: false });
-    return w;
+  /** Widget `id` of the project view, bound to alias `alias` instead of the view's stations. */
+  function copyProjectModel(models, id, alias) {
+    var copy = JSON.parse(JSON.stringify(models.dashboard.configuration.widgets[id]).split(models.project.alias).join(alias));
+    copy.id = uuid();
+    return copy;
   }
 
   function tableKey(c) {
@@ -559,17 +543,21 @@ root.TerrySenseTemplates = function (ui, tb) {
     });
   }
 
-  /** A dashboard titled `plan.title` in the owner's project dashboards: the map
-   * and the active alarms of `plan.stations`, their latest values, then each
+  /** A dashboard titled `plan.title` in the owner's project dashboards: below the
+   * navigation bar, the widgets of the models' project view where it places them —
+   * the map, the active alarms and the latest values of `plan.stations` — then each
    * chart of `plan.charts`, together or once per station. Linked from the
    * project's `config.homeDashboard`; resolves to its id. */
   function createHome(project, owner, plan) {
-    return Promise.all([loadModels(), tb.get('/api/widgetType', { fqn: MAP_FQN }), homeGroup(owner)]).then(function (got) {
+    return Promise.all([loadModels(), homeGroup(owner)]).then(function (got) {
       var models = modelsOf(got[0]), mconf = got[0].configuration;
+      if (!models.project) {
+        throw new Error(root.TerrySenseT('templates.projectViewMissing', 'the dashboard "{title}" has no project view', { title: MODELS_TITLE }));
+      }
       models.dashboard = got[0];
       var mlayout = mconf.states.station.layouts.main;
       // Charts stack below each other, so the layout scrolls instead of squeezing them into the screen height.
-      var grid = Object.assign({}, mlayout.gridSettings, { autoFillHeight: false });
+      var grid = Object.assign({}, models.project.grid, { autoFillHeight: false });
       var conf = { widgets: {}, entityAliases: {}, filters: {}, timewindow: mconf.timewindow, settings: mconf.settings,
         states: { 'default': { name: plan.title, root: true, layouts: { main: { widgets: {}, gridSettings: grid } } } } };
       var layout = conf.states['default'].layouts.main.widgets;
@@ -588,15 +576,19 @@ root.TerrySenseTemplates = function (ui, tb) {
         place(navWidget(models, projectAlias), 24, 1, 0, 0);
         top = 1;
       }
-      place(mapWidget(got[1], listId, plan.title), models.alarms ? 14 : 24, 10, top, 0);
-      if (models.alarms) { place(copyModel(models, models.alarms, { key: '', label: TB_TEXT.alarms, unit: '' }, listId), 10, 10, top, 14); }
-      var row = top + 10;
+      var row = top;
       var listed = plan.cat.keys.filter(function (k) { return plan.stations.some(function (st) { return plan.cat.by[k].at[st.id]; }); });
-      if (models.table && listed.length) {
-        var tall = Math.min(3 + plan.stations.length, 10);
-        place(tableWidget(models, plan.cat, listed, listId), 24, tall, row, 0);
-        row += tall;
-      }
+      Object.keys(models.project.layout).forEach(function (id) {
+        var at = models.project.layout[id], w = copyProjectModel(models, id, listId);
+        if (w.typeFullFqn === TABLE_FQN) {
+          if (!listed.length) { return; }
+          var ds = w.config.datasources[0];
+          ds.dataKeys = [ds.dataKeys[0]].concat(listed.map(function (k) { return tableKey(plan.cat.by[k]); }));
+        }
+        if (w.typeFullFqn === MAP_FQN) { w.config.title = plan.title; }
+        place(w, at.sizeX, at.sizeY, top + at.row, at.col);
+        row = Math.max(row, top + at.row + at.sizeY);
+      });
       plan.charts.forEach(function (ch) {
         var sts = chartStations(plan, ch);
         var high = mlayout.widgets[models.ids[ch.chart]].sizeY;
@@ -607,7 +599,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         });
       });
       paintStations(conf, plan.colors);
-      return tb.post('/api/dashboard?entityGroupId=' + got[2].id.id, { title: plan.title, configuration: conf });
+      return tb.post('/api/dashboard?entityGroupId=' + got[1].id.id, { title: plan.title, configuration: conf });
     }).then(function (saved) {
       var write = {};
       write[HOME_KEY] = saved.id.id;
