@@ -298,7 +298,11 @@ root.TerrySenseTemplates = function (ui, tb) {
   // -- project dashboards (FRONTEND.md *Project home dashboards*) ---------------------------
 
   var PALETTE = ['#2196f3', '#ef6c00', '#43a047', '#8e24aa', '#e53935', '#00897b', '#6d4c41', '#3949ab'];
-  var CHART_FQNS = ['system.time_series_chart', 'system.bar_chart_with_labels', 'system.state_chart'];
+  var LINE_FQN = 'system.time_series_chart';
+  var CHART_FQNS = [LINE_FQN, 'system.bar_chart_with_labels', 'system.state_chart'];
+  var MARKER_COLOR = '#0277b7';
+  // The map's marker colour function is where a project dashboard keeps its station colours; stationColors reads them back.
+  var COLORS_AT = 'var colors = ';
   var ICON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
   var ICON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>';
 
@@ -324,6 +328,83 @@ root.TerrySenseTemplates = function (ui, tb) {
     return id;
   }
 
+  /** The station each alias naming a single asset names, by alias id. */
+  function aliasStations(conf) {
+    var out = {};
+    Object.keys(conf.entityAliases || {}).forEach(function (k) {
+      var f = conf.entityAliases[k].filter || {};
+      if (f.type === 'singleEntity' && f.singleEntity && f.singleEntity.entityType === 'ASSET') { out[k] = f.singleEntity.id; }
+    });
+    return out;
+  }
+
+  /** The stations of a project dashboard's lists, the map's among them, in list order. */
+  function listedStations(conf) {
+    var ids = [];
+    Object.keys(conf.entityAliases || {}).forEach(function (k) {
+      var f = conf.entityAliases[k].filter || {};
+      if (f.type === 'entityList' && f.entityType === 'ASSET') { (f.entityList || []).forEach(function (id) { if (ids.indexOf(id) < 0) { ids.push(id); } }); }
+    });
+    return ids;
+  }
+
+  function mapMarker(conf) {
+    var id = Object.keys(conf.widgets).filter(function (k) { return conf.widgets[k].typeFullFqn === MAP_FQN; })[0];
+    return id ? ((conf.widgets[id].config.settings || {}).markers || [])[0] : null;
+  }
+
+  /** A project dashboard's colour of each station, by station id; {} when its map has none. */
+  function stationColors(conf) {
+    var m = mapMarker(conf), c = m && m.markerShape && m.markerShape.color;
+    var src = c && c.type === 'function' && typeof c.colorFunction === 'string' ? c.colorFunction : '';
+    var at = src.indexOf(COLORS_AT);
+    if (at < 0) { return {}; }
+    // The function stays editable in ThingsBoard, so a hand edit may no longer parse.
+    try { return JSON.parse(src.slice(at + COLORS_AT.length, src.indexOf(';', at))); } catch (e) { return {}; }
+  }
+
+  /** `colors` with one for each of `ids` that has none: the first palette colour no station uses yet. */
+  function withColors(ids, colors) {
+    var out = Object.assign({}, colors);
+    ids.forEach(function (id, i) {
+      if (out[id]) { return; }
+      var used = Object.keys(out).map(function (k) { return out[k]; });
+      out[id] = PALETTE.filter(function (c) { return used.indexOf(c) < 0; })[0] || PALETTE[i % PALETTE.length];
+    });
+    return out;
+  }
+
+  function lighter(hex) {
+    var n = parseInt(hex.slice(1), 16);
+    return '#' + [16, 8, 0].map(function (s) { var v = n >> s & 255; return ('0' + (v + Math.round((255 - v) * 0.45)).toString(16)).slice(-2); }).join('');
+  }
+
+  /** Paints `colors` on a project dashboard: each station's map marker, and its lines on every chart through its own alias,
+   * a line named after its alias named by `${entityName}`. A station's further channels on one chart: dashed on a line chart, lighter on bars. */
+  function paintStations(conf, colors) {
+    var m = mapMarker(conf);
+    if (m) {
+      m.markerShape = Object.assign(m.markerShape || {}, { color: { type: 'function', color: MARKER_COLOR,
+        colorFunction: COLORS_AT + JSON.stringify(colors) + ';\nreturn colors[data.entityId] || \'' + MARKER_COLOR + '\';' } });
+    }
+    var of = aliasStations(conf);
+    Object.keys(conf.widgets).forEach(function (id) {
+      var w = conf.widgets[id];
+      if (CHART_FQNS.indexOf(w.typeFullFqn) < 0) { return; }
+      (w.config.datasources || []).forEach(function (ds) {
+        var color = colors[of[ds.entityAliasId]], named = conf.entityAliases[ds.entityAliasId].alias + ' · ';
+        if (!color) { return; }
+        ds.dataKeys.forEach(function (k, j) {
+          if (k.label && k.label.indexOf(named) === 0) { k.label = '${entityName} · ' + k.label.slice(named.length); }
+          if (w.typeFullFqn !== LINE_FQN) { k.color = j ? lighter(color) : color; return; }
+          k.color = color;
+          k.settings = k.settings || {};
+          k.settings.lineSettings = Object.assign(k.settings.lineSettings || {}, { lineType: j ? 'dashed' : 'solid' });
+        });
+      });
+    });
+  }
+
   /** The stock map, one marker per station of alias `alias` at its `latitude` / `longitude`. */
   function mapWidget(stock, alias, title) {
     var conf = JSON.parse(stock.descriptor.defaultConfig);
@@ -335,7 +416,6 @@ root.TerrySenseTemplates = function (ui, tb) {
       click: { type: 'doNothing' }, markerType: 'shape'
     });
     marker.tooltip = Object.assign(marker.tooltip || {}, { show: false });
-    marker.markerShape = Object.assign(marker.markerShape || {}, { color: { type: 'constant', color: '#0277b7' } });
     conf.settings.markers = [marker];
     conf.datasources = [];
     conf.title = title;
@@ -413,7 +493,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     return { title: own, channels: [key], chart: cat.by[key].chart, together: true, stations: ids };
   }
 
-  /** The chart `ch` from its model: a line per station and channel, labelled by station when several share it;
+  /** The chart `ch` from its model: a line per station and channel, labelled by `${entityName}` when several share it;
    * a second unit on a right-hand axis; alarm bands only with a single station, whose limits they are. */
   function chartWidget(models, cat, ch, stations, aliasOf, title) {
     var modelId = models.ids[ch.chart], model = models.dashboard.configuration.widgets[modelId];
@@ -430,15 +510,13 @@ root.TerrySenseTemplates = function (ui, tb) {
       s.yAxes.right = Object.assign(JSON.parse(JSON.stringify(s.yAxes['default'])), { id: 'right', position: 'right', order: 1, units: units[1], label: units[1] });
       w.config.units = '';
     }
-    var n = 0;
     w.config.datasources = stations.map(function (st) {
       var mine = series.filter(function (x) { return x.st === st; });
       if (!mine.length) { return null; }
       return { type: 'entity', name: '', entityAliasId: aliasOf(st.id),
         dataKeys: mine.map(function (x) {
           var key = fill(mds.dataKeys[0], x.c);
-          key.label = multi ? st.name + ' · ' + (x.c.bound || x.c.label) : x.c.bound || x.c.label;
-          key.color = PALETTE[n++ % PALETTE.length];
+          key.label = (multi ? '${entityName} · ' : '') + (x.c.bound || x.c.label);
           if (units.length > 1) { key.settings = Object.assign(key.settings || {}, { yAxisId: axis(x.c.key) }); }
           return key;
         }),
@@ -528,6 +606,7 @@ root.TerrySenseTemplates = function (ui, tb) {
           row += high;
         });
       });
+      paintStations(conf, plan.colors);
       return tb.post('/api/dashboard?entityGroupId=' + got[2].id.id, { title: plan.title, configuration: conf });
     }).then(function (saved) {
       var write = {};
@@ -569,12 +648,10 @@ root.TerrySenseTemplates = function (ui, tb) {
       });
 
       o.join.forEach(function (id) {
-        var w = conf.widgets[id], all = w.config.datasources, n = 0;
-        all.forEach(function (d) { n += d.dataKeys.length; });
+        var w = conf.widgets[id], all = w.config.datasources;
         // A chart that gains a second station names each line by its station and leaves the alarm bands out.
         if (all.length === 1) {
-          var first = (conf.entityAliases[all[0].entityAliasId] || {}).alias;
-          all[0].dataKeys.forEach(function (k) { k.label = first + ' · ' + k.label; });
+          all[0].dataKeys.forEach(function (k) { k.label = '${entityName} · ' + k.label; });
           all[0].latestDataKeys = [];
           if (w.config.settings.thresholds) { w.config.settings.thresholds = []; }
         }
@@ -582,8 +659,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         all.forEach(function (d) { d.dataKeys.forEach(function (k) { if (cat.by[k.name] && !keys.some(function (x) { return x.name === k.name; })) { keys.push(k); } }); });
         all.push({ type: 'entity', name: '', entityAliasId: alias, latestDataKeys: [], dataKeys: keys.map(function (k) {
           var key = JSON.parse(JSON.stringify(k));
-          key.label = st.name + ' · ' + cat.by[k.name].at[st.id].label;
-          key.color = PALETTE[n++ % PALETTE.length];
+          key.label = '${entityName} · ' + cat.by[k.name].at[st.id].label;
           return key;
         }) });
       });
@@ -597,8 +673,55 @@ root.TerrySenseTemplates = function (ui, tb) {
         layout[w.id] = { sizeX: 24, sizeY: high, row: row, col: 0 };
         row += high;
       });
+      paintStations(conf, withColors(listedStations(conf), stationColors(conf)));
       return tb.post('/api/dashboard', dash);
     });
+  }
+
+  /** *Station colours*: each station's colour on project dashboard `o.homeId`, its map
+   * marker and its chart lines alike. `o`: homeId, names (station names by id), done(). */
+  function openStationColors(o) {
+    var dr = ui.openDrawer(esc(root.TerrySenseT('templates.colors.title', 'Station colours')), esc(o.title || ''));
+    dr.body.appendChild(h('<div class="ts-loading"></div>')).textContent = root.TerrySenseT('templates.add.loading', 'Loading the project dashboard…');
+    tb.get('/api/dashboard/' + o.homeId).then(function (dash) {
+      var conf = dash.configuration, ids = listedStations(conf), colors = withColors(ids, stationColors(conf)), aliases = aliasStations(conf);
+      dr.body.innerHTML = '';
+      dr.body.appendChild(h('<p class="ts-field-hint"></p>')).textContent =
+        root.TerrySenseT('templates.colors.hint', 'Each station\'s marker on the map and its lines on the charts.');
+      var list = dr.body.appendChild(h('<div class="ts-home-stations"></div>'));
+      ids.forEach(function (id) {
+        var alias = Object.keys(aliases).filter(function (k) { return aliases[k] === id; })[0];
+        list.appendChild(colorRow(o.names[id] || (alias && conf.entityAliases[alias].alias) || id, colors, id));
+      });
+      var go = ui.drawerActions(dr);
+      go.addEventListener('click', function () {
+        go.disabled = true;
+        paintStations(conf, colors);
+        tb.post('/api/dashboard', dash).then(function () {
+          ui.closeDrawer();
+          ui.toast(root.TerrySenseT('templates.colors.done', 'Station colours saved'));
+          o.done();
+        }).catch(function (err) {
+          go.disabled = false;
+          ui.toast(root.TerrySenseT('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error');
+        });
+      });
+    }).catch(function (err) {
+      dr.body.innerHTML = '';
+      dr.body.appendChild(h('<div class="ts-empty ts-error"></div>')).textContent =
+        root.TerrySenseT('templates.add.loadFailed', 'Could not load the project dashboard: {error}', { error: errText(err) });
+    });
+  }
+
+  /** A station's name with a colour picker writing `colors[id]`. */
+  function colorRow(name, colors, id) {
+    var row = h('<label class="ts-home-color"><input type="color" data-f="color"><span></span></label>');
+    row.setAttribute('data-station', name);
+    row.lastChild.textContent = name;
+    row.firstChild.value = colors[id];
+    row.firstChild.title = root.TerrySenseT('templates.colors.pick', 'Its colour on the map and the charts');
+    row.firstChild.addEventListener('input', function () { colors[id] = row.firstChild.value; });
+    return row;
   }
 
   function chip(text, title) {
@@ -633,6 +756,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     var all = o.entries.map(function (e) { return e.station; }), ticked = {};
     all.forEach(function (st) { ticked[st.id] = true; });
     var charts = starterPlan(cat, all.map(function (st) { return st.id; }));
+    var colors = withColors(all.map(function (st) { return st.id; }), {});
 
     if (o.intro) { dr.body.appendChild(h('<p class="ts-field-hint ts-home-intro"></p>')).textContent = o.intro; }
     var nameField = dr.body.appendChild(h('<div class="ts-field"><label class="ts-field-label"></label><input class="ts-input wide" data-f="title"></div>'));
@@ -670,6 +794,8 @@ root.TerrySenseTemplates = function (ui, tb) {
         row.querySelector('span').textContent = st.name;
         row.querySelector('.ts-row-meta').textContent = !n ? root.TerrySenseT('templates.home.noChannel', 'no channel yet')
           : n === 1 ? root.TerrySenseT('common.channelOne', '1 channel') : root.TerrySenseT('common.channelMany', '{n} channels', { n: n });
+        var swatch = colorRow(st.name, colors, st.id).firstChild;
+        row.insertBefore(swatch, row.querySelector('.ts-row-meta'));
         var box = row.querySelector('input');
         box.checked = !!ticked[st.id];
         box.addEventListener('change', function () {
@@ -794,7 +920,9 @@ root.TerrySenseTemplates = function (ui, tb) {
 
     go.addEventListener('click', function () {
       var stations = picked();
-      var plan = { title: input.value.trim(), stations: stations, cat: cat,
+      var mine = {};
+      stations.forEach(function (st) { mine[st.id] = colors[st.id]; });
+      var plan = { title: input.value.trim(), stations: stations, cat: cat, colors: mine,
         charts: charts.filter(function (ch) { return chartStations({ stations: stations, cat: cat }, ch).length; }) };
       go.disabled = true;
       createHome(o.project, o.owner, plan).then(function (id) {
@@ -1201,7 +1329,7 @@ root.TerrySenseTemplates = function (ui, tb) {
 
   return { CHARTS: CHARTS, chartOf: chartOf, channelsOf: channelsOf, create: create, addChannels: addChannels,
            missingFrom: missingFrom, openCreate: openCreate, openPanel: openPanel,
-           homeStations: homeStations, openCreateHome: openCreateHome, openAddToHome: openAddToHome };
+           homeStations: homeStations, openCreateHome: openCreateHome, openAddToHome: openAddToHome, openStationColors: openStationColors };
 };
 
 })(typeof self !== 'undefined' ? self : this);

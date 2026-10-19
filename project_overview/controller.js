@@ -711,6 +711,7 @@ function projectItems() {
   return [
     { a: 'rename', label: t('common.rename', 'Rename'), run: function () { life.rename(e, cardEl.querySelector('.ts-proj-pname'), renderHeader); } },
     state.canCreateDashboards && { a: 'create-home', label: t('overview.createHome', 'Create project dashboard…'), run: function () { openCreateHome(); } },
+    state.home && state.canCreateDashboards && { a: 'home-colors', label: t('overview.homeColors', 'Station colours…'), run: openStationColors },
     state.pub && state.pubDash && { a: on ? 'link-off' : 'link-on', label: on ? t('overview.linkOff', 'Public link off') : t('overview.linkOn', 'Public link on'), run: function () { setPublicLink(!on); } },
     on && { a: 'copy-link', label: t('overview.copyLink', 'Copy link'), run: copyLink },
     state.stations.length && { a: 'export', label: t('overview.export', 'Export data…'), run: openExport },
@@ -813,6 +814,12 @@ function lostHomeBanner() {
     }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
   });
   return el;
+}
+
+function openStationColors() {
+  var names = {};
+  state.stations.forEach(function (e) { names[e.station.id] = e.station.name; });
+  templates.openStationColors({ homeId: state.home.id, title: state.home.title, names: names, done: function () {} });
 }
 
 function openAddHome(entry) {
