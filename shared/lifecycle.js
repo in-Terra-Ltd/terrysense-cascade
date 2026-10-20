@@ -204,7 +204,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
   // A state name starts a sentence in the panel and continues one in the confirmation.
   function lowerFirst(text) { return text.charAt(0).toLowerCase() + text.slice(1); }
 
-  /** *Out of service* (CA-23): in repair, lost or retired, picked in a panel. */
+  /** *Out of service* (CA-23): the reason picked in a panel. */
   function outOfService(device, done) {
     var states = G.SERVICE_STATES;
     var dr = ui.openDrawer(esc(t('common.outOfService', 'Out of service')), esc(deviceName(device)));

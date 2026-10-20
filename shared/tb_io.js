@@ -510,7 +510,7 @@ root.TerrySenseTbIo = function (ctx) {
       silencedUntil: until > Date.now() ? until : null, silencedBy: attrs['service.silencedBy'] || '' };
   }
 
-  /** `retired`, `repair`, `lost`, or null for in service. */
+  /** A service state (ATTRIBUTES.md §4), or null for in service. */
   function setServiceState(entity, value) {
     return value ? saveAttrs(entity, { 'service.state': value }) : deleteAttrs(entity, ['service.state']);
   }

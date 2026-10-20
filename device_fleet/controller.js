@@ -884,7 +884,7 @@ function openPane(d) {
   if (state.writable) {
     var act = section(body, t('ui.actions', 'Actions'));
     var service = tb.serviceOf(d.attrs).state, item = life.serviceItem(deviceRef(d), d.attrs, refresh);
-    navRow(act, t('fleet.service', 'Service'), service ? G.SERVICE_STATES[service] : t('fleet.inService', 'In service'), item.label, item.run)
+    navRow(act, t('fleet.service', 'Service'), service ? G.SERVICE_STATES[service] || service : t('fleet.inService', 'In service'), item.label, item.run)
       .querySelector('button').setAttribute('data-a', item.a);
     if (state.tenant) {
       var only = act.appendChild(ui.tenantSection(h('<div></div>'))).lastChild;

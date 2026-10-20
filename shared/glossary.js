@@ -111,6 +111,9 @@ function tokens() {
 // A device out of service (ATTRIBUTES.md §4 *Service state*), in the order offered.
 function serviceStates() {
   return {
+    stock: t('glossary.serviceState.stock', 'In stock'),
+    shipped: t('glossary.serviceState.shipped', 'Shipped'),
+    removed: t('glossary.serviceState.removed', 'Removed, not yet redeployed'),
     repair: t('glossary.serviceState.repair', 'In repair'),
     lost: t('glossary.serviceState.lost', 'Lost or stolen'),
     retired: t('common.retired', 'Retired')
