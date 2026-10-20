@@ -620,8 +620,40 @@ root.TerrySenseTbIo = function (ctx) {
     }).catch(function () { return null; });
   }
 
+  /** Live updates of the entity's attributes in `scopes` and of its latest telemetry, every key, on
+   * ThingsBoard's own websocket. `onChange` runs on each update after the initial snapshots, and once
+   * after a reconnect. Returns `{healthy, close}`: healthy once every snapshot arrived. */
+  function watch(entity, scopes, onChange) {
+    var ws = getService('telemetryWsService');
+    var cmds = scopes.map(function (scope) { return { type: 'ATTRIBUTES', entityType: entity.entityType, entityId: entity.id, scope: scope }; })
+      .concat([{ type: 'TIMESERIES', entityType: entity.entityType, entityId: entity.id, scope: 'LATEST_TELEMETRY' }]);
+    var seen = {}, closed = false;
+    var subscriber = {
+      subscriptionCommands: cmds,
+      onData: function (update) {
+        if (closed) { return; }
+        if (!seen[update.subscriptionId]) { seen[update.subscriptionId] = true; return; }
+        onChange();
+      },
+      onReconnected: function () { seen = {}; if (!closed) { onChange(); } }
+    };
+    ws.subscribe(subscriber);
+    return {
+      healthy: function () { return !closed && cmds.every(function (c) { return seen[c.cmdId]; }); },
+      close: function () {
+        if (closed) { return; }
+        closed = true;
+        // The service sends an unsubscribe only for its own command classes.
+        var queue = ws.cmdWrapper && ws.cmdWrapper.cmds;
+        if (queue) { cmds.forEach(function (c) { queue.push(Object.assign({}, c, { unsubscribe: true })); }); }
+        ws.unsubscribe(subscriber);
+      }
+    };
+  }
+
   return {
     io: io, get: get, getAll: getAll, post: post, del: del, attrsMap: attrsMap, saveAttrs: saveAttrs, deleteAttrs: deleteAttrs,
+    watch: watch,
     getAsset: getAsset, assetLevel: assetLevel, deviceLevel: deviceLevel, boundDatasource: boundDatasource, loadEntity: loadEntity,
     currentUser: currentUser, canWrite: canWrite, listUsers: listUsers, resolveStations: resolveStations,
     channelFreshness: channelFreshness,

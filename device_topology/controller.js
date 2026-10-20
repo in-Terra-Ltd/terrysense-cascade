@@ -66,6 +66,8 @@ var M = window.TerrySenseMapping;
 
 var FAULT_PREFIX = 'peripheralFault.';
 var REFRESH_MS = 60000;
+var LIVE_POLL_MS = 600000;
+var LIVE_SETTLE_MS = 1000;
 var HOUR_MS = 3600000;
 var DAY_MS = 86400000;
 var BATTERY_VOLTAGE = ['p0.voltage', 'logr.batteryVoltage'];
@@ -336,7 +338,7 @@ function request(body, toast) {
   return tb.saveAttrs(deviceEntity(), { 'cmd.request': body }).then(function () {
     ui.toast(toast);
     ui.closeDrawer();
-    setTimeout(refresh, 1500);
+    if (!(live && live.healthy())) { setTimeout(refresh, 1500); }
     return true;
   }).catch(function (err) {
     ui.toast(t('common.notSent', 'Not sent: {error}', { error: err && (err.message || (err.error && err.error.message)) || err }), 'error');
@@ -2889,17 +2891,51 @@ function truthyFlag(v) { return v === true || v === 'true' || v === 1; }
 
 // -- load -------------------------------------------------------------------------------
 
-var timer = null;
-function refresh() {
-  if (!root.isConnected && timer) { clearInterval(timer); return Promise.resolve(); }
+// A live update re-reads the device once the updates pause, so a report of several frames renders once.
+// The poll is the fallback: while the live updates run it reads only past LIVE_POLL_MS.
+var timer = null, live = null, liveTimer = null, running = null, again = false, deferred = false;
+
+function stop() {
+  clearInterval(timer);
+  clearTimeout(liveTimer);
+  if (live) { live.close(); live = null; }
+}
+
+function editing() {
   var focus = document.activeElement;
-  if (focus && bodyEl.contains(focus) && /^(INPUT|SELECT)$/.test(focus.tagName)) { return Promise.resolve(); }
+  return focus && bodyEl.contains(focus) && /^(INPUT|SELECT)$/.test(focus.tagName);
+}
+
+function refresh() {
+  if (!root.isConnected && timer) { stop(); return Promise.resolve(); }
+  if (editing()) { deferred = true; return Promise.resolve(); }
+  if (running) { again = true; return running; }
   refreshBtn.disabled = true;
-  return loadDevice(state.device.id.id).then(render).catch(function (err) {
+  running = loadDevice(state.device.id.id).then(render).catch(function (err) {
     ui.toast(t('common.refreshFailed', 'Refresh failed: {error}', { error: err && err.message ? err.message : err }), 'error');
-  }).then(function () { refreshBtn.disabled = false; });
+  }).then(function () {
+    refreshBtn.disabled = false;
+    running = null;
+    if (again) { again = false; return refresh(); }
+  });
+  return running;
 }
 refreshBtn.addEventListener('click', refresh);
+// A refresh held back by an edit runs once the focus leaves the field.
+bodyEl.addEventListener('focusout', function () {
+  setTimeout(function () { if (deferred && !editing()) { deferred = false; refresh(); } }, 0);
+});
+
+function liveChange() {
+  if (!root.isConnected) { stop(); return; }
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(refresh, LIVE_SETTLE_MS);
+}
+
+function poll() {
+  if (live && live.healthy() && Date.now() - state.loadedAt < LIVE_POLL_MS) { return; }
+  refresh();
+}
 
 tb.boundDatasource().then(function (ds) {
   if (!ds || ds.entityType !== 'DEVICE') { fail(t('device.noDeviceBound', 'No device bound — bind a device in the widget\'s Data tab.')); return; }
@@ -2910,7 +2946,9 @@ tb.boundDatasource().then(function (ds) {
   }).then(function (writable) {
     state.writable = writable;
     render();
-    timer = setInterval(refresh, REFRESH_MS);
+    timer = setInterval(poll, REFRESH_MS);
+    live = tb.watch(deviceEntity(), ['CLIENT_SCOPE', 'SERVER_SCOPE'], liveChange);
+    if (ctx.registerDestroyCallback) { ctx.registerDestroyCallback(stop); }
     // Opened from a station's *Connect a device*: the connect panel, that station picked;
     // a station this device already feeds opens its channels instead.
     var connectTo = (ctx.stateController.getStateParams() || {}).connectTo;
