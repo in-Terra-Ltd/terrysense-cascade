@@ -106,10 +106,13 @@ function fromEarlier(m, s, node) {
   return !measureOf(m, s, node) || (s.enabled === undefined && s.interval === undefined && silent(m, s));
 }
 
-/** A measurement about the LOGR itself, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */
+/** A name the vocabulary marks about the LOGR itself or about a sensor's own state, not the site. */
+function aboutDevice(e) { return !!(e && (e.aboutLogger || e.aboutSensor)); }
+
+/** A measurement about the LOGR itself or a sensor's own state, by the vocabulary flags of its catalog name; at position 0, also one the catalog does not name. */
 function diagnostic(m, s, node) {
   var x = measureOf(m, s, node);
-  return x ? !!(m.names[x.defaultName] || {}).aboutLogger : s.position === 0;
+  return x ? aboutDevice(m.names[x.defaultName]) : s.position === 0;
 }
 
 function measureOf(m, s, node) {
@@ -197,7 +200,7 @@ function namesForKind(m, kind, mapped) {
     return camel(e.kind) === kind && !e.fixed && !e.rule && (!retiredName(m, n) || mapped[n]);
   })
     .sort(function (a, b) {
-      return !!m.names[a].aboutLogger - !!m.names[b].aboutLogger || (m.names[a].label || a).localeCompare(m.names[b].label || b);
+      return aboutDevice(m.names[a]) - aboutDevice(m.names[b]) || (m.names[a].label || a).localeCompare(m.names[b].label || b);
     });
 }
 
@@ -222,7 +225,7 @@ function mappable(m, mapped) {
       return part.keys.map(function (key) {
         return { key: key, label: labelOf(m, key), unit: readingUnit(m, key), group: part.id, groupLabel: part.label || t('mapping.logrItself', 'LOGR itself'),
                  names: namesForReading(m, key, mapped), name: nameOf(m, key),
-                 diagnostic: part.id === 'logr' || !!(entryOf(m, key) || {}).aboutLogger };
+                 diagnostic: part.id === 'logr' || aboutDevice(entryOf(m, key)) };
       });
     }));
   }
@@ -239,7 +242,7 @@ function mappable(m, mapped) {
         : s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
         : s.position + ' · ' + (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral')),
       earlier: earlier,
-      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && (m.names[name] || {}).aboutLogger)
+      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && aboutDevice(m.names[name]))
     };
   }).filter(function (r) { return r.names.length && !DRYC_KEY.test(r.key); });
 }
