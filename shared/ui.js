@@ -285,7 +285,7 @@ root.TerrySenseUi = function (rootEl) {
         var camel = kindOf(n);
         var spec = kindSpec(camel);
         if (opts.allowKind && !opts.allowKind(spec)) { return; }
-        if (entry.diagnostic && !showDiag && !q) { return; }
+        if (entry.aboutLogger && !showDiag && !q) { return; }
         if (onlyInUse && !q && inUse.indexOf(n) < 0) { return; }
         var kindLabel = spec ? t.kind(camel, spec.label) : (camel || t('common.unknownKind', 'Unknown kind'));
         var hay = (n + ' ' + text.label + ' ' + text.description + ' ' + kindLabel).toLowerCase();

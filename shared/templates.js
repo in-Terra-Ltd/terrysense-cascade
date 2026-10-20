@@ -85,7 +85,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     function rank(c) { var i = order.indexOf(c); return i < 0 ? order.length : i; }
     return Object.keys(resolver.channelsFromAttrs(attrs, names)).filter(function (c) {
       var e = names[resolver.splitChannelKey(c).name] || {};
-      return !e.diagnostic && !e.rule;
+      return !e.aboutLogger && !e.rule;
     }).sort(function (a, b) { return rank(a) - rank(b); }).map(function (c) {
       var e = names[resolver.splitChannelKey(c).name] || {};
       var shown = attrs['effective.' + c + '.label'] || e.label || c;

@@ -103,7 +103,7 @@ function channelOf(name, entry, attrs, latest) {
     name: name, sourceKey: entry.key, device: entry.device, stale: null,
     label: t.label(name, attrs['effective.' + name + '.label'] || base.label || name, state.names),
     unit: attrs['effective.' + name + '.unit'] || '',
-    diagnostic: !!base.diagnostic,
+    diagnostic: !!base.aboutLogger,
     rule: !!base.rule,
     states: base.states || null,
     whenTrue: attrs['effective.' + name + '.textWhenTrue'],

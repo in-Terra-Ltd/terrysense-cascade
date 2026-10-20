@@ -109,7 +109,7 @@ function fromEarlier(m, s, node) {
 /** A measurement about the LOGR itself, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */
 function diagnostic(m, s, node) {
   var x = measureOf(m, s, node);
-  return x ? !!(m.names[x.defaultName] || {}).diagnostic : s.position === 0;
+  return x ? !!(m.names[x.defaultName] || {}).aboutLogger : s.position === 0;
 }
 
 function measureOf(m, s, node) {
@@ -197,7 +197,7 @@ function namesForKind(m, kind, mapped) {
     return camel(e.kind) === kind && !e.fixed && !e.rule && (!retiredName(m, n) || mapped[n]);
   })
     .sort(function (a, b) {
-      return !!m.names[a].diagnostic - !!m.names[b].diagnostic || (m.names[a].label || a).localeCompare(m.names[b].label || b);
+      return !!m.names[a].aboutLogger - !!m.names[b].aboutLogger || (m.names[a].label || a).localeCompare(m.names[b].label || b);
     });
 }
 
@@ -222,7 +222,7 @@ function mappable(m, mapped) {
       return part.keys.map(function (key) {
         return { key: key, label: labelOf(m, key), unit: readingUnit(m, key), group: part.id, groupLabel: part.label || t('mapping.logrItself', 'LOGR itself'),
                  names: namesForReading(m, key, mapped), name: nameOf(m, key),
-                 diagnostic: part.id === 'logr' || !!(entryOf(m, key) || {}).diagnostic };
+                 diagnostic: part.id === 'logr' || !!(entryOf(m, key) || {}).aboutLogger };
       });
     }));
   }
@@ -239,7 +239,7 @@ function mappable(m, mapped) {
         : s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
         : s.position + ' · ' + (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral')),
       earlier: earlier,
-      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && (m.names[name] || {}).diagnostic)
+      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && (m.names[name] || {}).aboutLogger)
     };
   }).filter(function (r) { return r.names.length && !DRYC_KEY.test(r.key); });
 }
