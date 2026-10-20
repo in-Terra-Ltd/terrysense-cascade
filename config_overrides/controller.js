@@ -3,13 +3,14 @@
  * PROJECT or STATION, or on the device branch to a DEVICE or a DeviceDefaults
  * asset: shows only what is set on that entity, grouped into measurements,
  * notifications and retention, and edits it in side panels. A device has
- * alarm limits on its own source keys and retention only (CONFIG_CASCADE.md §1).
+ * alarm limits on its device-health sources and retention only (CONFIG_CASCADE.md §1),
+ * its sources named as vocabulary.md §7 says.
  * Every save re-resolves the stations or devices it reaches (CONFIG_RESOLVER.md §5).
  * A customer, and the DEFAULTS asset for the tenant, also show the owner's
  * address book (CA-20); a customer or project row a lower level replaces
  * carries a badge (CA-21).
  *
- * Loads after shared/resolver.js, glossary.js, ui.js, tb_io.js and calculations.js; styles are
+ * Loads after shared/resolver.js, mapping.js, glossary.js, ui.js, tb_io.js and calculations.js; styles are
  * shared/theme.css. Design: logr-product-docs/cloud/CASCADE_EDITOR.md.
  */
 
@@ -19,6 +20,7 @@ opts = opts || {};
 var t = window.TerrySenseI18n(ctx);
 
 var resolver = window.TerrySenseResolver;
+var M = window.TerrySenseMapping;
 var G = window.TerrySenseGlossary;
 var tb = window.TerrySenseTbIo(ctx);
 var io = tb.io;
@@ -61,6 +63,9 @@ var state = {
   origin: null, own: {}, ancestors: [], names: {}, kinds: {}, channelKinds: {},
   stationCount: 0, readOnly: true, showInherited: false, customerId: null, users: null, defaultsShared: true,
   deviceBranch: false, sourceKeys: [], calcMeta: { names: {}, attributes: {} },
+  // The device branch: the mapping.js model of the device or profile, its positions,
+  // each source key's description, and the station channels each key feeds.
+  devModel: null, nodes: {}, src: {}, feeds: {},
   // book: the owner's address book — `holder` the CUSTOMER or the tenant's
   // ContactBook asset, `usage` {entryId: [{level, attrs, key}]} where a section shows it.
   // below: the levels under a customer or project with their attributes, for CA-21.
@@ -125,16 +130,16 @@ function isOwn(key) { return state.own[key] !== undefined && state.own[key] !== 
 // A channel is a station key: a name, or `<name>-<n>` for one instance of a
 // repeatable name. Its dictionary entry is the name's (measurement/vocabulary.md §3).
 // On the device branch a channel is a device source key (`logr.batteryVoltage`,
-// `p0.voltage`); its entry is the vocabulary name after its prefix.
-function nameOf(ch) { return ch.indexOf('.') >= 0 ? ch.split('.').pop() : resolver.splitChannelKey(ch).name; }
+// `p0.voltage`); its entry is the name sourceInfo finds for it.
+function nameOf(ch) { return state.deviceBranch ? sourceInfo(ch).name || ch : resolver.splitChannelKey(ch).name; }
 function entryOf(ch) { return state.names[nameOf(ch)] || {}; }
 function channelKind(ch) {
-  return entryOf(ch).kind || state.channelKinds[ch] || (ch.indexOf('.') >= 0 ? resolver.deviceKeyKind(ch, state.names) : null);
+  return entryOf(ch).kind || state.channelKinds[ch] || (state.deviceBranch ? resolver.deviceKeyKind(ch, state.names) : null);
 }
 function kindSpec(ch) { return resolver.kindSpec(channelKind(ch), state.kinds) || {}; }
 function alarmClass(ch) { return kindSpec(ch).alarm || 'numeric'; }
 function chLabel(ch) {
-  if (ch.indexOf('.') >= 0) { return entryOf(ch).label ? t.channel(nameOf(ch), entryOf(ch).label) : ch; }
+  if (state.deviceBranch) { return sourceInfo(ch).label; }
   var split = resolver.splitChannelKey(ch);
   var label = entryOf(ch).label || split.name;
   return t.label(ch, split.instance ? label + ' ' + split.instance : label, state.names);
@@ -147,7 +152,98 @@ function kindLabel(ch) {
 // The unit a channel is stored in, which its thresholds and hysteresis are
 // entered in: a station channel's name's unit, else its kind's cloud unit; a
 // device source key's the cloud unit (vocabulary.md §2.3).
-function unitOf(ch) { return (ch.indexOf('.') < 0 && entryOf(ch).unit) || kindSpec(ch).cloudUnit || ''; }
+function unitOf(ch) { return (!state.deviceBranch && entryOf(ch).unit) || kindSpec(ch).cloudUnit || ''; }
+
+// -- device sources (vocabulary.md §7) ----------------------------------------
+
+/** A device source key as the device view names it: `{label, name, group,
+ * position, health, earlier, dryc}`. `name` is its vocabulary name, `group` its
+ * position or part (`LOGR itself`, `1 · pH probe`). A device-health source is a
+ * reading about the logger itself (ALARMING.md §1.2): on a LOGR3 or LOGR4 a
+ * position-0 source, on a LOGR2 a `logr.*` key, on any device a source whose
+ * name the vocabulary marks `aboutLogger`. */
+function sourceInfo(key) {
+  if (state.src[key]) { return state.src[key]; }
+  var m = state.devModel, out;
+  var s = m.bus && M.parseSource(key);
+  if (s) {
+    var node = state.nodes[s.position], p = node && m.peripherals[node.type];
+    var x = node ? M.measureOf(m, s, node) : null;
+    var earlier = s.position > 0 && state.origin.entityType === 'DEVICE' && (!node || (!!p && !x));
+    out = {
+      label: M.sourceLabel(m, s, earlier ? null : node), name: x ? x.defaultName : null, position: s.position, earlier: earlier,
+      group: s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
+        : earlier ? t('mapping.earlierAt', '{pos} · earlier peripheral', { pos: s.position })
+        : node ? s.position + ' · ' + (p ? p.displayName : node.type)
+        : t('settings.anyPeripheralAt', '{pos} · the peripheral each device has there', { pos: s.position }),
+      health: s.position === 0 || !!(x && (m.names[x.defaultName] || {}).aboutLogger)
+    };
+  } else {
+    var name = state.names[key] ? key : key.slice(key.indexOf('.') + 1), e = state.names[name];
+    var logr2 = m.device.type === 'logr2', part = logr2 ? M.logr2Parts([key]).filter(function (q) { return q.keys.length; })[0] : null;
+    out = {
+      label: e && e.label ? t.channel(name, e.label) : key, name: e ? name : null, position: null, earlier: false,
+      group: logr2 ? part.label || t('mapping.logrItself', 'LOGR itself') : t('common.device', 'Device'),
+      health: (!!part && part.id === 'logr') || !!(e && e.aboutLogger)
+    };
+  }
+  out.dryc = M.DRYC_KEY.test(key);
+  state.src[key] = out;
+  return out;
+}
+
+/** The device or profile as mapping.js models it, and its positions: a LOGR's
+ * own board at position 0 even when its TOPOLOGY report leaves it out. */
+function loadSources() {
+  state.src = {};
+  state.feeds = {};
+  if (!state.deviceBranch) { return Promise.resolve(); }
+  var o = state.origin, isDevice = o.entityType === 'DEVICE';
+  var type = isDevice ? o.kind : o.name, bus = tb.isComplexDevice(type);
+  var defaults = state.ancestors.filter(function (a) { return a.level.role === 'defaults'; })[0];
+  var peripherals = parseVal((defaults || { attrs: {} }).attrs['config.peripherals']) || {};
+  return Promise.all([
+    isDevice && bus ? Promise.resolve(io.fetchClientAttrs(o)).catch(function () { return {}; }) : Promise.resolve({}),
+    isDevice ? feedsOf(o) : Promise.resolve({})
+  ]).then(function (got) {
+    state.feeds = got[1];
+    state.devModel = { bus: bus, device: { type: type }, client: got[0] || {}, latest: {}, faults: {},
+                       peripherals: peripherals, kinds: state.kinds, names: state.names };
+    state.nodes = bus ? M.topology(state.devModel) : {};
+    if (bus && !state.nodes[0]) { state.nodes[0] = { position: 0, type: type.replace(/^logr/, 'logr-') }; }
+  });
+}
+
+/** `{sourceKey: [{station, channel}]}`: the station channels the device feeds. */
+function feedsOf(device) {
+  return Promise.resolve(tb.deviceStations(device)).then(function (stations) {
+    return Promise.all(stations.map(function (s) {
+      return io.fetchAttrs(s).then(function (a) { return { station: s, entries: resolver.mapEntries((a || {})['config.channelMap']) }; });
+    }));
+  }).then(function (list) {
+    var out = {};
+    list.forEach(function (b) {
+      Object.keys(b.entries).forEach(function (c) {
+        var e = b.entries[c];
+        if (e.device === device.id) { (out[e.key] = out[e.key] || []).push({ station: b.station, channel: c }); }
+      });
+    });
+    return out;
+  }).catch(function () { return {}; });
+}
+
+/** A device limit on a measurement, not on the device's health: it pages the technicians. */
+function onMeasurement(ch) { return state.deviceBranch && !sourceInfo(ch).health; }
+function measurementChip() {
+  return '<span class="ts-chip warn" data-tip="' + esc(t('settings.measurementLimitTip', 'A limit here raises a device alarm, sent to the device alarm contacts, the technicians. Set a measurement alarm on the station channel instead.')) + '">' +
+    esc(t('settings.measurementLimit', 'Pages the technicians')) + '</span>';
+}
+
+/** The row meta of a device source: its position or part, then its key. */
+function sourceMeta(el, ch, prefix) {
+  el.textContent = (prefix ? prefix + ' · ' : '') + sourceInfo(ch).group + ' · ';
+  el.appendChild(h('<span class="ts-mono"></span>')).textContent = ch;
+}
 
 function stateText(ch, v) {
   if (alarmClass(ch) === 'boolean') {
@@ -240,7 +336,7 @@ function load() {
         state.names = parseVal((defaults || { attrs: {} }).attrs['config.channelNames']) || {};
         state.kinds = parseVal((defaults || { attrs: {} }).attrs['config.kinds']) || {};
         state.calcMeta = { names: state.names, attributes: parseVal((defaults || { attrs: {} }).attrs['config.calcAttributes']) || {} };
-        return loadBook().then(loadBelow);
+        return Promise.all([loadBook().then(loadBelow), loadSources()]);
       }).then(function () {
         renderHead();
         render();
@@ -409,7 +505,8 @@ function render() {
       '<div class="ts-row-value">' + channelChips(ch, own[ch], ownVal) + '</div>' +
       (state.readOnly ? '' : '<div class="ts-row-actions"><button type="button" class="ts-icon-btn" title="' + esc(t('common.edit', 'Edit')) + '">' + ICON.edit + '</button></div>') + '</div>');
     row.querySelector('.ts-row-label').textContent = chLabel(ch);
-    row.querySelector('.ts-row-meta').textContent = kindLabel(ch);
+    if (state.deviceBranch) { sourceMeta(row.querySelector('.ts-row-meta'), ch); } else { row.querySelector('.ts-row-meta').textContent = kindLabel(ch); }
+    if (onMeasurement(ch)) { row.querySelector('.ts-row-value').insertAdjacentHTML('afterbegin', measurementChip()); }
     var keys = Object.keys(state.own).filter(function (k) { return k.indexOf(CH + ch + '.') === 0; });
     lowerBadge(row, chLabel(ch), keys);
     if (!state.readOnly) { row.addEventListener('click', function () { openChannel(ch, false); }); }
@@ -430,7 +527,9 @@ function render() {
         '<div class="ts-row-value">' + channelChips(ch, inh[ch], function (k) { var x = inherited(k); return x ? x.value : ''; }) + '</div>' +
         (state.readOnly ? '' : '<div class="ts-row-actions"><button type="button" class="ts-btn ghost">' + esc(t('settings.changeHere', 'Change here')) + '</button></div>') + '</div>');
       row.querySelector('.ts-row-label').textContent = chLabel(ch);
-      row.querySelector('.ts-row-meta').textContent = t('settings.from', 'from {level}', { level: levelLabel(from) });
+      var fromText = t('settings.from', 'from {level}', { level: levelLabel(from) });
+      if (state.deviceBranch) { sourceMeta(row.querySelector('.ts-row-meta'), ch, fromText); } else { row.querySelector('.ts-row-meta').textContent = fromText; }
+      if (onMeasurement(ch)) { row.querySelector('.ts-row-value').insertAdjacentHTML('afterbegin', measurementChip()); }
       if (!state.readOnly) { row.querySelector('.ts-btn').addEventListener('click', function () { openChannel(ch, false); }); }
       sec.appendChild(row);
     });
@@ -1060,26 +1159,65 @@ function openMeasurementPicker(fromAdd) {
   }
 }
 
-/** The device branch: pick one of the device's own source keys, the LOGR's
- * diagnostics included — they are what a device alarm is about. */
+/** The device branch: pick one of the device's health sources, grouped by
+ * position or part as on the device view. A measurement's alarm belongs on the
+ * station channel it feeds (ALARMING.md §1.2): it is listed with that station,
+ * never offered. A dry contact interface's fields and an earlier peripheral's
+ * readings are neither. */
 function openSourcePicker(fromAdd) {
-  var dr = scopedDrawer(esc(t('settings.chooseReading', 'Choose a reading')));
+  var dr = scopedDrawer(esc(t('settings.chooseReading', 'Choose a reading')), esc(t('settings.deviceHealthOnly', 'Readings about the device itself')));
   if (fromAdd) { dr.onBack(openAdd); }
   var own = channelsWith(state.own);
   var keys = state.sourceKeys.slice();
   Object.keys(own).forEach(function (k) { if (keys.indexOf(k) < 0) { keys.push(k); } });
-  if (!keys.length) { dr.body.appendChild(h('<div class="ts-empty">' + esc(t('settings.noReading', 'No reading stored yet.')) + '</div>')); return; }
-  keys.sort().forEach(function (k) {
-    var o = ui.nameOption(k, { label: chLabel(k), description: kindLabel(k) }, own[k] ? '<span class="ts-chip">' + esc(t('settings.setHereChip', 'set here')) + '</span>' : '', '');
+  keys = keys.filter(function (k) { var s = sourceInfo(k); return !s.dryc && !s.earlier && kindSpec(k).alarm !== 'none'; });
+  var health = keys.filter(function (k) { return sourceInfo(k).health; }), measures = keys.filter(function (k) { return !sourceInfo(k).health; });
+  var itself = t('mapping.logrItself', 'LOGR itself');
+  function rank(k) { var s = sourceInfo(k); return s.position !== null ? s.position : s.group === itself ? 0 : 1; }
+  function order(a, b) { return rank(a) - rank(b) || sourceInfo(a).group.localeCompare(sourceInfo(b).group) || chLabel(a).localeCompare(chLabel(b)); }
+  function grouped(list, each) {
+    var last = null;
+    list.sort(order).forEach(function (k) {
+      if (sourceInfo(k).group !== last) { last = sourceInfo(k).group; dr.body.appendChild(h('<div class="ts-subhead"></div>')).textContent = last; }
+      dr.body.appendChild(each(k));
+    });
+  }
+  function unitText(k) { var u = unitOf(k); return kindLabel(k) + (u ? ' · ' + u : ''); }
+  if (!health.length) { dr.body.appendChild(h('<div class="ts-empty">' + esc(t('settings.noHealthReading', 'No reading about the device itself stored yet.')) + '</div>')); }
+  grouped(health, function (k) {
+    var o = ui.nameOption(k, { label: chLabel(k), description: unitText(k) }, own[k] ? '<span class="ts-chip">' + esc(t('settings.setHereChip', 'set here')) + '</span>' : '', '');
     o.addEventListener('click', function () { openChannel(k, fromAdd); });
-    dr.body.appendChild(o);
+    return o;
+  });
+  dr.body.appendChild(h('<div class="ts-banner">' + ICON.info + '<span></span></div>')).querySelector('span').textContent =
+    t('settings.measurementOnStation', 'A limit here raises a device alarm, sent to the technicians. A measurement alarm, for the people on site, is set on the station channel the measurement feeds.');
+  if (!measures.length || state.origin.entityType !== 'DEVICE') { return; }
+  dr.body.appendChild(h('<div class="ts-subhead"></div>')).textContent = t('settings.setOnStation', 'Measurements: set on their station');
+  grouped(measures, function (k) {
+    var feeds = state.feeds[k] || [];
+    var where = feeds.length ? feeds.map(function (f) { return t('settings.storedAs', '{station} as {channel}', { station: f.station.name, channel: M.channelLabel(state.names, f.channel) }); }).join(' · ')
+      : t('settings.notStored', 'Not stored on any station');
+    var o = ui.nameOption(k, { label: chLabel(k), description: where }, '', 'ts-opt-static');
+    if (feeds.length && opts.projectDashboardId && !tb.isPublicView()) {
+      var side = o.querySelector('.ts-opt-side');
+      feeds.forEach(function (f) {
+        var b = side.insertBefore(h('<button type="button" class="ts-btn ghost"></button>'), side.firstChild);
+        b.textContent = t('settings.stationSettings', 'Settings of {station}', { station: f.station.name });
+        b.addEventListener('click', function () { tb.openDashboard(opts.projectDashboardId, 'settings', f.station); });
+      });
+    }
+    return o;
   });
 }
 
 function openChannel(ch, fromAdd) {
   var cls = alarmClass(ch);
-  var dr = scopedDrawer(esc(chLabel(ch)), esc(kindLabel(ch)) + ' · <span class="ts-mono">' + esc(ch) + '</span>');
+  var dr = scopedDrawer(esc(chLabel(ch)), (state.deviceBranch ? esc(sourceInfo(ch).group) + ' · ' : '') + esc(kindLabel(ch)) + ' · <span class="ts-mono">' + esc(ch) + '</span>');
   if (fromAdd) { dr.onBack(function () { openMeasurementPicker(true); }); }
+  if (onMeasurement(ch)) {
+    dr.body.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span></span></div>')).querySelector('span').textContent =
+      t('settings.measurementLimitNote', 'This limit is on a measurement: it raises a device alarm, sent to the technicians, not to the people on site. Remove it here and set it on the station channel the measurement feeds.');
+  }
   if (cls === 'numeric') { numericEditor(ch, dr); } else { conditionEditor(ch, dr, cls === 'boolean'); }
 }
 
