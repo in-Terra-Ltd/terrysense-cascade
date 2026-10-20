@@ -98,12 +98,12 @@ function silent(m, s) {
   return !!iv && Date.now() - ((m.latest[s.sourceKey] || {}).ts || 0) > SILENT_INTERVALS * iv * 1000;
 }
 
-/** A source an earlier peripheral at its position left behind: the device does not subscribe it, and the
- * peripheral there now does not offer it or it went silent. Never position 0, the LOGR itself; undecided
- * on a type the catalog lacks. */
+/** A source an earlier peripheral at its position left behind: the peripheral there now does not offer it,
+ * subscribed or not, or the device does not subscribe it and it went silent. Never position 0, the LOGR
+ * itself; undecided on a type the catalog lacks. */
 function fromEarlier(m, s, node) {
-  if (!s.position || s.enabled !== undefined || s.interval !== undefined || !node || !m.peripherals[node.type]) { return false; }
-  return !measureOf(m, s, node) || silent(m, s);
+  if (!s.position || !node || !m.peripherals[node.type]) { return false; }
+  return !measureOf(m, s, node) || (s.enabled === undefined && s.interval === undefined && silent(m, s));
 }
 
 /** A measurement about the LOGR itself, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */

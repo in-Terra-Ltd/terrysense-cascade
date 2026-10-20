@@ -1962,6 +1962,10 @@ function leftoverPart(kind, pos, list, node, open) {
   function keysOf(sources) {
     var keys = [];
     sources.forEach(function (s) { [s.sourceKey, s.sourceKey + '.status'].forEach(function (k) { if (state.latest[k]) { keys.push(k); } }); });
+    // A DRYC status goes with the readings unpacked from it.
+    if (sources.some(function (s) { return s.kind === 'drycStatus'; })) {
+      Object.keys(state.latest).forEach(function (k) { if (k.indexOf('p' + pos + '.') === 0 && M.DRYC_FIELD.test(k)) { keys.push(k); } });
+    }
     return keys;
   }
   if (state.writable) {
