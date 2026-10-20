@@ -106,10 +106,10 @@ function fromEarlier(m, s, node) {
   return !measureOf(m, s, node) || (s.enabled === undefined && s.interval === undefined && silent(m, s));
 }
 
-/** A name the vocabulary marks about the LOGR itself or about a sensor's own state, not the site. */
-function aboutDevice(e) { return !!(e && (e.aboutLogger || e.aboutSensor)); }
+/** A name the vocabulary marks about the hardware, the LOGR or a sensor, not the site. */
+function aboutDevice(e) { return !!(e && e.aboutHardware); }
 
-/** A measurement about the LOGR itself or a sensor's own state, by the vocabulary flags of its catalog name; at position 0, also one the catalog does not name. */
+/** A measurement about the hardware, by the vocabulary flag of its catalog name; at position 0, also one the catalog does not name. */
 function diagnostic(m, s, node) {
   var x = measureOf(m, s, node);
   return x ? aboutDevice(m.names[x.defaultName]) : s.position === 0;

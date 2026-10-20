@@ -38,7 +38,7 @@ function terms() {
     position: t('glossary.term.position', 'The connector on the LOGR bus the sensor is plugged into. Position 0 is the LOGR itself.'),
     device: t('glossary.term.device', 'The device that sends the data for this station. Change it after a hardware swap; the history stays intact.'),
     station: t('glossary.term.station', 'The measuring point the measurements belong to, shown on dashboards.'),
-    diagnostics: t('glossary.term.diagnostics', 'Measurements about the LOGR itself (battery, charger, enclosure). Rarely needed on a station.'),
+    diagnostics: t('glossary.term.diagnostics', 'Measurements about the hardware: the LOGR itself (battery, charger, enclosure) or a sensor’s own state. Rarely needed on a station.'),
     inUse: t('glossary.term.inUse', 'Measurements mapped on at least one station below this level.'),
     statusSources: t('glossary.term.statusSources', 'Each value names its source: device values come from the LOGR’s own reports (STATUS, SUBSCRIPTIONS), network values from the network server’s reception of the last uplink. The cloud estimates none of them; the battery runtime is the same number the BLE app shows.'),
     wiring: t('glossary.term.wiring', 'The stations this device feeds, through their channel maps. A position or a reading feeding no station is stored on the device only and shows on no dashboard.'),

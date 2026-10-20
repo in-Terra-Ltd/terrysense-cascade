@@ -752,18 +752,18 @@ function sourceNames(device, clientAttrs, peripherals, names, configured) {
   return out;
 }
 
-/** Whether a device source is about the logger itself (vocabulary.md §7): on a
+/** Whether a device source is about the hardware (vocabulary.md §7): on a
  * LOGR3 or LOGR4 every position-0 source, on a LOGR2 every `logr.*` key, on any
- * device a source whose name is `aboutLogger`. `name` is its vocabulary name
+ * device a source whose name is `aboutHardware`. `name` is its vocabulary name
  * (`sourceNames`), null when unknown. Mirrors `is_health_source()` in config_resolver.py. */
 function isHealthSource(deviceType, key, name, names) {
   names = names || {};
   key = String(key);
   var pos = /^p(\d+)\./.exec(key);
-  if (LOGR_BOARD.test(String(deviceType || '')) && pos) { return Number(pos[1]) === 0 || !!(names[name] || {}).aboutLogger; }
+  if (LOGR_BOARD.test(String(deviceType || '')) && pos) { return Number(pos[1]) === 0 || !!(names[name] || {}).aboutHardware; }
   if (deviceType === 'logr2' && key.indexOf('logr.') === 0) { return true; }
   var own = name || (names[key] ? key : key.slice(key.indexOf('.') + 1));
-  return !!(names[own] || {}).aboutLogger;
+  return !!(names[own] || {}).aboutHardware;
 }
 
 /** A device's configured source keys split by `isHealthSource`: `keys`
