@@ -1868,7 +1868,16 @@ function positionGroup(pos, node, srcs, removed) {
   var dryc = pos !== 0 && !!node && /^dryc/.test(node.type);
   var fields = dryc ? drycFields(pos) : [];
   var odd = false;
-  if (removed) { g.el.dataset.removed = '1'; odd = true; }
+  if (removed) {
+    g.el.dataset.removed = '1';
+    odd = true;
+    var gone = positionKeys(pos);
+    if (state.writable && gone.length) {
+      g.act('<button type="button" class="ts-btn danger" data-a="delete-position">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () {
+        deleteData(t('device.removedPosition', 'removed position {pos}', { pos: pos }), gone);
+      });
+    }
+  }
   else if (!node) { g.flag('warn', t('device.notInTopology', 'not in the topology report')); odd = true; }
   else if (!p && pos !== 0) { g.flag('warn', t('device.notInCatalog', 'not in the catalog')); odd = true; }
   var added = {};
@@ -1999,12 +2008,23 @@ function leftoverPart(kind, pos, list, node, open) {
   return el;
 }
 
-/** Removed positions whose readings have all gone silent, folded out of the way. */
+/** Every key a position stored on the device: its readings, their status and a DRYC's unpacked fields. */
+function positionKeys(pos) {
+  return Object.keys(state.latest).filter(function (k) { return k.indexOf('p' + pos + '.') === 0; });
+}
+
+/** Removed positions whose readings have all gone silent, folded out of the way; a writer deletes their data one by one or all at once. */
 function formerGroup(list, srcs) {
   var g = group('former');
   g.el.dataset.former = list.length;
   g.num(null);
   g.name(t('device.formerPositions', 'Former positions'));
+  var gone = [].concat.apply([], list.map(positionKeys));
+  if (state.writable && list.length > 1 && gone.length) {
+    g.act('<button type="button" class="ts-btn danger" data-a="delete-former">' + esc(t('device.deleteData', 'Delete data')) + '</button>', function () {
+      deleteData(t('device.formerPositionsAt', 'former positions {list}', { list: list.join(', ') }), gone);
+    });
+  }
   var since = Math.max.apply(null, list.map(function (pos) { return newestTs(srcs.filter(function (s) { return s.position === pos; })); }));
   g.mono(t('device.formerSince', 'Removed from the bus, silent since {when}', { when: ui.when(since) }));
   g.sum(String(list.length));
