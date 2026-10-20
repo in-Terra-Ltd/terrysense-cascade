@@ -11,9 +11,8 @@
  *
  * Chain (nearest first): STATION -> PROJECT, via `Contains`, then CUSTOMER
  * (the project's owner, skipped when tenant-owned), then the DEFAULTS asset
- * (tenant-owned, shared read-only with customers). A DEVICE: the device, the
- * DeviceDefaults asset named after its profile, then DEFAULTS
- * (CONFIG_CASCADE.md §1). The TENANT entity itself is never read — a
+ * (tenant-owned, shared read-only with customers). A DEVICE: the device, then
+ * the DeviceDefaults asset named after its profile (CONFIG_CASCADE.md §1). The TENANT entity itself is never read — a
  * customer-admin user gets 403 on it.
  *
  * `io` contract (every method returns a Promise, so this loads identically
@@ -30,7 +29,6 @@
  *
  *   fetchCustomerStations(customer) -> [station]      stations the customer owns
  *   fetchAllStations()              -> [station]      every station, for DEFAULTS
- *   fetchAllDevices()               -> [device]       every device, for DEFAULTS
  *
  * For the address book of a tenant-owned station:
  *
@@ -149,7 +147,8 @@ function levelDisplay(level) {
 
 /** Nearest-first chain for `origin` — a STATION/LOCATION/PROJECT asset, the
  * CUSTOMER entity, or the DEFAULTS asset itself. Walks `Contains` up from an
- * ordinary asset, then appends CUSTOMER (unless tenant-owned) and DEFAULTS. */
+ * ordinary asset, then appends CUSTOMER (unless tenant-owned) and DEFAULTS. A
+ * DEVICE stops at its DeviceDefaults asset: DEFAULTS holds station settings. */
 function buildChain(origin, io) {
   if (origin.entityType === 'CUSTOMER') {
     return appendDefaults([{ entityType: 'CUSTOMER', id: origin.id, name: origin.name, kind: 'Customer', role: 'customer' }], io);
@@ -158,14 +157,14 @@ function buildChain(origin, io) {
     return Promise.resolve([{ entityType: 'ASSET', id: origin.id, name: origin.name, kind: origin.kind, role: 'defaults' }]);
   }
   if (origin.kind === DEVICE_DEFAULTS_KIND) {
-    return appendDefaults([{ entityType: 'ASSET', id: origin.id, name: origin.name, kind: DEVICE_DEFAULTS_KIND, role: 'deviceDefaults' }], io);
+    return Promise.resolve([{ entityType: 'ASSET', id: origin.id, name: origin.name, kind: DEVICE_DEFAULTS_KIND, role: 'deviceDefaults' }]);
   }
   if (origin.entityType === 'DEVICE') {
     var own = [{ entityType: 'DEVICE', id: origin.id, name: origin.name, kind: origin.kind, role: 'device' }];
     var profileDefaults = io.fetchDeviceDefaults ? Promise.resolve(io.fetchDeviceDefaults(origin.kind)) : Promise.resolve(null);
     return profileDefaults.then(function (dd) {
       if (dd) { own.push({ entityType: 'ASSET', id: dd.id, name: dd.name, kind: DEVICE_DEFAULTS_KIND, role: 'deviceDefaults' }); }
-      return appendDefaults(own, io);
+      return own;
     });
   }
 
@@ -657,10 +656,7 @@ function affectedStations(entity, io) {
     return io.fetchCustomerStations ? Promise.resolve(io.fetchCustomerStations(entity)) : Promise.resolve([]);
   }
   if (kind === 'defaults') {
-    return Promise.all([
-      io.fetchAllStations ? Promise.resolve(io.fetchAllStations()) : [],
-      io.fetchAllDevices ? Promise.resolve(io.fetchAllDevices()) : []
-    ]).then(function (got) { return got[0].concat(got[1]); });
+    return io.fetchAllStations ? Promise.resolve(io.fetchAllStations()) : Promise.resolve([]);
   }
   return descendantAssets(entity, io).then(function (all) {
     return all.filter(function (e) { return String(e.kind || '').toLowerCase() === 'station'; });
@@ -704,11 +700,10 @@ function deviceKeyKind(key, names) {
   return (names[String(key).split('.').pop()] || {}).kind || null;
 }
 
-/** `{sourceKey: kind}` configured on a device's own levels — the device and its
- * DeviceDefaults asset, never the DEFAULTS asset's station channel names. */
+/** `{sourceKey: kind}` configured on a device's levels: the device and its
+ * DeviceDefaults asset. */
 function deviceChannels(chain, io, cache) {
-  var own = chain.filter(function (l) { return l.role === 'device' || l.role === 'deviceDefaults'; });
-  return Promise.all(own.map(function (l) { return attrsOf(l, io, cache); }).concat([channelNamesOf(io, cache)])).then(function (got) {
+  return Promise.all(chain.map(function (l) { return attrsOf(l, io, cache); }).concat([channelNamesOf(io, cache)])).then(function (got) {
     var names = got.pop(), out = {};
     got.forEach(function (attrs) {
       Object.keys(attrs || {}).forEach(function (k) {
@@ -757,6 +752,36 @@ function sourceNames(device, clientAttrs, peripherals, names, configured) {
   return out;
 }
 
+/** Whether a device source is about the logger itself (vocabulary.md §7): on a
+ * LOGR3 or LOGR4 every position-0 source, on a LOGR2 every `logr.*` key, on any
+ * device a source whose name is `aboutLogger`. `name` is its vocabulary name
+ * (`sourceNames`), null when unknown. Mirrors `is_health_source()` in config_resolver.py. */
+function isHealthSource(deviceType, key, name, names) {
+  names = names || {};
+  key = String(key);
+  var pos = /^p(\d+)\./.exec(key);
+  if (LOGR_BOARD.test(String(deviceType || '')) && pos) { return Number(pos[1]) === 0 || !!(names[name] || {}).aboutLogger; }
+  if (deviceType === 'logr2' && key.indexOf('logr.') === 0) { return true; }
+  var own = name || (names[key] ? key : key.slice(key.indexOf('.') + 1));
+  return !!(names[own] || {}).aboutLogger;
+}
+
+/** A device's configured source keys split by `isHealthSource`: `keys`
+ * `{sourceKey: kind}` it resolves, `ignored` the measurement sources a limit
+ * names, which raise no device alarm. Mirrors `_device_keys` in config_resolver.py. */
+function deviceSources(device, chain, io, cache) {
+  var logr = LOGR_BOARD.test(String(device.kind || ''));
+  return Promise.all([deviceChannels(chain, io, cache), logr && io.fetchClientAttrs ? clientAttrsOf(device, io, cache) : {},
+    defaultsJson('peripherals', io, cache), channelNamesOf(io, cache)]).then(function (got) {
+    var configured = got[0], names = got[3], found = sourceNames(device, got[1], got[2], names, Object.keys(configured));
+    var keys = {}, ignored = [];
+    Object.keys(configured).sort().forEach(function (k) {
+      if (isHealthSource(device.kind, k, found[k] || null, names)) { keys[k] = configured[k]; } else { ignored.push(k); }
+    });
+    return { keys: keys, ignored: ignored };
+  });
+}
+
 /** A device's `effective.sourceNames`, and the dictionary label of each configured
  * source key that resolves no label of its own. Mirrors `_resolve_source_names`. */
 function sourceNameEntries(device, keys, channelEntries, io, cache) {
@@ -798,8 +823,8 @@ function deviceLabels(chain, stationAttrs, scalarEntries, io, cache) {
         if (logr && !io.fetchClientAttrs) { return null; }
         var sources = logr
           ? clientAttrsOf(device, io, cache).then(function (client) { return sourceNames(device, client, peripherals, names); })
-          : buildChain(device, io).then(function (own) { return deviceChannels(own, io, cache); }).then(function (keys) {
-            return sourceNames(device, {}, peripherals, names, Object.keys(keys));
+          : buildChain(device, io).then(function (own) { return deviceSources(device, own, io, cache); }).then(function (src) {
+            return sourceNames(device, {}, peripherals, names, Object.keys(src.keys));
           });
         return sources.then(function (found) {
           return Object.keys(found).reduce(function (inner, key) {
@@ -852,14 +877,16 @@ function messageLabels(scalarEntries, channelEntries, names, devLabels) {
 }
 
 /** Side-effect-free resolution of one STATION's full `effective.*` block — or
- * a DEVICE's: its own limits and retention, no notification key. */
+ * a DEVICE's: the limits of its health sources and its retention, no
+ * notification key; `ignored` lists the measurement sources a limit names. */
 function resolveStation(station, io, cache) {
   cache = cache || createCache();
   var device = station.entityType === 'DEVICE';
   return buildChain(station, io).then(function (chain) {
     return Promise.all([attrsOf(chain[0], io, cache), channelNamesOf(io, cache)]).then(function (got) {
       var stationAttrs = got[0], names = got[1];
-      return (device ? deviceChannels(chain, io, cache) : Promise.resolve(channelsFromAttrs(got[0], got[1]))).then(function (keys) {
+      return (device ? deviceSources(station, chain, io, cache) : Promise.resolve({ keys: channelsFromAttrs(got[0], got[1]), ignored: [] })).then(function (src) {
+        var keys = src.keys;
         var channelEntries = [];
         var fields = channelFields();
         var work = Promise.resolve();
@@ -891,7 +918,7 @@ function resolveStation(station, io, cache) {
           var entries = got[0].concat(channelEntries, got[2], messageLabels(got[0], channelEntries, names, got[3]), got[1]);
           var effective = {};
           entries.forEach(function (e) { effective[e.effectiveKey] = e.value; });
-          return { station: station, chain: chain, measuredKeys: keys, entries: entries, effective: effective };
+          return { station: station, chain: chain, measuredKeys: keys, ignored: src.ignored, entries: entries, effective: effective };
         });
       });
     });
@@ -973,6 +1000,8 @@ return {
   deviceSourceKey: deviceSourceKey,
   deviceKeyKind: deviceKeyKind,
   deviceChannels: deviceChannels,
+  isHealthSource: isHealthSource,
+  deviceSources: deviceSources,
   sourceNames: sourceNames,
   inheritedValue: inheritedValue
 };

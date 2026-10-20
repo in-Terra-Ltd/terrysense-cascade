@@ -158,13 +158,11 @@ function unitOf(ch) { return (!state.deviceBranch && entryOf(ch).unit) || kindSp
 
 /** A device source key as the device view names it: `{label, name, group,
  * position, health, earlier, dryc}`. `name` is its vocabulary name, `group` its
- * position or part (`LOGR itself`, `1 · pH probe`). A device-health source is a
- * reading about the logger itself (ALARMING.md §1.2): on a LOGR3 or LOGR4 a
- * position-0 source, on a LOGR2 a `logr.*` key, on any device a source whose
- * name the vocabulary marks `aboutLogger`. */
+ * position or part (`LOGR itself`, `1 · pH probe`). `health`: a reading about
+ * the logger itself, the only kind a device limit applies to (resolver.isHealthSource). */
 function sourceInfo(key) {
   if (state.src[key]) { return state.src[key]; }
-  var m = state.devModel, out;
+  var m = state.devModel, type = m.device.type, out;
   var s = m.bus && M.parseSource(key);
   if (s) {
     var node = state.nodes[s.position], p = node && m.peripherals[node.type];
@@ -176,7 +174,7 @@ function sourceInfo(key) {
         : earlier ? t('mapping.earlierAt', '{pos} · earlier peripheral', { pos: s.position })
         : node ? s.position + ' · ' + (p ? p.displayName : node.type)
         : t('settings.anyPeripheralAt', '{pos} · the peripheral each device has there', { pos: s.position }),
-      health: s.position === 0 || !!(x && (m.names[x.defaultName] || {}).aboutLogger)
+      health: resolver.isHealthSource(type, key, x ? x.defaultName : null, m.names)
     };
   } else {
     var name = state.names[key] ? key : key.slice(key.indexOf('.') + 1), e = state.names[name];
@@ -184,7 +182,7 @@ function sourceInfo(key) {
     out = {
       label: e && e.label ? t.channel(name, e.label) : key, name: e ? name : null, position: null, earlier: false,
       group: logr2 ? part.label || t('mapping.logrItself', 'LOGR itself') : t('common.device', 'Device'),
-      health: (!!part && part.id === 'logr') || !!(e && e.aboutLogger)
+      health: resolver.isHealthSource(type, key, e ? name : null, state.names)
     };
   }
   out.dryc = M.DRYC_KEY.test(key);
@@ -200,8 +198,7 @@ function loadSources() {
   if (!state.deviceBranch) { return Promise.resolve(); }
   var o = state.origin, isDevice = o.entityType === 'DEVICE';
   var type = isDevice ? o.kind : o.name, bus = tb.isComplexDevice(type);
-  var defaults = state.ancestors.filter(function (a) { return a.level.role === 'defaults'; })[0];
-  var peripherals = parseVal((defaults || { attrs: {} }).attrs['config.peripherals']) || {};
+  var peripherals = parseVal((state.vocabulary || { attrs: {} }).attrs['config.peripherals']) || {};
   return Promise.all([
     isDevice && bus ? Promise.resolve(io.fetchClientAttrs(o)).catch(function () { return {}; }) : Promise.resolve({}),
     isDevice ? feedsOf(o) : Promise.resolve({})
@@ -232,11 +229,11 @@ function feedsOf(device) {
   }).catch(function () { return {}; });
 }
 
-/** A device limit on a measurement, not on the device's health: it pages the technicians. */
+/** A device limit on a measurement, not on the device's health: the resolvers ignore it. */
 function onMeasurement(ch) { return state.deviceBranch && !sourceInfo(ch).health; }
 function measurementChip() {
-  return '<span class="ts-chip warn" data-tip="' + esc(t('settings.measurementLimitTip', 'A limit here raises a device alarm, sent to the device alarm contacts, the technicians. Set a measurement alarm on the station channel instead.')) + '">' +
-    esc(t('settings.measurementLimit', 'Pages the technicians')) + '</span>';
+  return '<span class="ts-chip warn" data-tip="' + esc(t('settings.measurementLimitTip', 'A device limit applies to readings about the device itself only, so this one raises no alarm. Set a measurement alarm on the station channel instead.')) + '">' +
+    esc(t('settings.measurementLimit', 'No alarm')) + '</span>';
 }
 
 /** The row meta of a device source: its position or part, then its key. */
@@ -328,10 +325,16 @@ function load() {
       var customer = chain.filter(function (l) { return l.role === 'customer'; })[0];
       state.customerId = state.origin.entityType === 'CUSTOMER' ? state.origin.id : (customer ? customer.id : null);
       var levels = chain.slice(1);
-      return Promise.all(levels.map(function (l) { return io.fetchAttrs(l); })).then(function (attrs) {
+      // The device branch stops below DEFAULTS, which still holds the vocabulary.
+      var vocabulary = state.deviceBranch ? Promise.resolve(io.fetchDefaults()).then(function (d) {
+        return d ? io.fetchAttrs(d).then(function (a) { return { level: d, attrs: a || {} }; }) : null;
+      }) : Promise.resolve(null);
+      return Promise.all([Promise.all(levels.map(function (l) { return io.fetchAttrs(l); })), vocabulary]).then(function (got) {
+        var attrs = got[0];
         state.ancestors = levels.map(function (l, i) { return { level: l, attrs: attrs[i] || {} }; });
         var defaults = chain[0].role === 'defaults' ? { level: chain[0], attrs: state.own }
-          : state.ancestors.filter(function (a) { return a.level.role === 'defaults'; })[0];
+          : got[1] || state.ancestors.filter(function (a) { return a.level.role === 'defaults'; })[0];
+        state.vocabulary = defaults;
         state.defaultsShared = !!defaults;
         state.names = parseVal((defaults || { attrs: {} }).attrs['config.channelNames']) || {};
         state.kinds = parseVal((defaults || { attrs: {} }).attrs['config.kinds']) || {};
@@ -1216,7 +1219,7 @@ function openChannel(ch, fromAdd) {
   if (fromAdd) { dr.onBack(function () { openMeasurementPicker(true); }); }
   if (onMeasurement(ch)) {
     dr.body.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span></span></div>')).querySelector('span').textContent =
-      t('settings.measurementLimitNote', 'This limit is on a measurement: it raises a device alarm, sent to the technicians, not to the people on site. Remove it here and set it on the station channel the measurement feeds.');
+      t('settings.measurementLimitNote', 'This limit is on a measurement, not on the device itself, so it raises no alarm. Remove it here and set it on the station channel the measurement feeds.');
   }
   if (cls === 'numeric') { numericEditor(ch, dr); } else { conditionEditor(ch, dr, cls === 'boolean'); }
 }
