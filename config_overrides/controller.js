@@ -497,7 +497,7 @@ function render() {
   bodyEl.innerHTML = '';
   renderNotice();
   if (!state.defaultsShared) {
-    bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-terra defaults are not shared with this customer, so tenant defaults and the measurement names do not load. A tenant admin shares the “Shared defaults” group.')) + '</span></div>'));
+    bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-terra defaults are not shared with this customer, so tenant defaults and the measurement names do not load. in-Terra shares the “Shared defaults” group.')) + '</span></div>'));
   }
 
   var sec = h('<div class="ts-section"><div class="ts-section-head">' + esc(t('settings.measurements', 'Measurements')) + ' ' + info('measurements') + '</div></div>');
@@ -540,8 +540,8 @@ function render() {
   if (!sec.querySelector('.ts-row')) { sec.appendChild(emptyLine('measurement')); }
   if (rules.length) {
     sec.appendChild(h('<div class="ts-field-hint" data-rules="' + rules.length + '"></div>')).textContent =
-      rules.length === 1 ? t('settings.rulesOne', '1 dry contact interface rule raises alarms here; their names and severities are set in the station’s Dry contact interface view.')
-        : t('settings.rulesMany', '{n} dry contact interface rules raise alarms here; their names and severities are set in the station’s Dry contact interface view.', { n: rules.length });
+      rules.length === 1 ? t('settings.rulesOne', '1 digital I/O module rule raises alarms here; their names and severities are set in the station’s Digital I/O module view.')
+        : t('settings.rulesMany', '{n} digital I/O module rules raise alarms here; their names and severities are set in the station’s Digital I/O module view.', { n: rules.length });
   }
   bodyEl.appendChild(sec);
   if (state.origin.kind === 'Station') { renderCalculations(); }
@@ -1449,7 +1449,7 @@ function conditionEditor(ch, dr, isBool) {
   var addBtn = sec.querySelector('.ts-btn');
   if (!values().length) {
     addBtn.hidden = true;
-    list.appendChild(h('<div class="ts-empty">' + esc(t('settings.noStates', 'This measurement declares no states, so no condition can be set. A tenant admin adds them in the peripheral catalog.')) + '</div>'));
+    list.appendChild(h('<div class="ts-empty">' + esc(t('settings.noStates', 'This measurement declares no states, so no condition can be set. in-Terra adds them in the peripheral catalog.')) + '</div>'));
   }
 
   if (isBool) {

@@ -112,13 +112,13 @@ root.TerrySenseLifecycle = function (ui, tb) {
 
   /** *Retire* (CA-17) and *Reactivate*: `service.state`. */
   function retire(station, done) {
-    ui.confirm(t('lifecycle.retire.confirm', 'Retire <b>{name}</b>? It raises no alarm, notifies nobody and is never stale; its history and dashboards stay. It folds into Retired at the end of the list and leaves the map.', { name: esc(station.name) }), t('lifecycle.retire.ok', 'Retire')).then(function (ok) {
+    ui.confirm(t('lifecycle.retire.confirm', 'Archive <b>{name}</b>? It raises no alarm, notifies nobody and is never stale; its history and dashboards stay. It folds into Archived at the end of the list and leaves the map.', { name: esc(station.name) }), t('lifecycle.retire.ok', 'Archive')).then(function (ok) {
       if (!ok) { return null; }
       return tb.setServiceState(station, 'retired').then(function () {
-        ui.toast(t('lifecycle.retire.done', '{name} retired', { name: station.name }));
+        ui.toast(t('lifecycle.retire.done', '{name} archived', { name: station.name }));
         done();
       });
-    }).catch(fail(t('lifecycle.retire.failed', 'Not retired: {error}')));
+    }).catch(fail(t('lifecycle.retire.failed', 'Not archived: {error}')));
   }
 
   function reactivate(station, done) {
@@ -133,7 +133,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
    * confirmed by typing its name; their history only when ticked. */
   function remove(target, stations, done) {
     var html = target.kind === 'Project'
-      ? (stations.length ? t('lifecycle.delete.projectWithStations', 'Delete the project <b>{name}</b> and its retired stations {stations}?',
+      ? (stations.length ? t('lifecycle.delete.projectWithStations', 'Delete the project <b>{name}</b> and its archived stations {stations}?',
         { name: esc(target.name), stations: names(stations) }) : t('lifecycle.delete.project', 'Delete the project <b>{name}</b>?', { name: esc(target.name) }))
       : t('lifecycle.delete.station', 'Delete the station <b>{name}</b>?', { name: esc(target.name) });
     html += ' ' + (stations.length ? t('lifecycle.delete.consequenceMany', 'Relations and channel maps go with them; dashboards stay. This cannot be undone.')
@@ -194,7 +194,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
       { a: s.isPublic ? 'private' : 'public', label: s.isPublic ? t('lifecycle.public.makePrivate', 'Make private') : t('lifecycle.public.makePublic', 'Make public'),
         run: function () { setPublic(s.station, s.owner, !s.isPublic, s.changed, s.projectPublic, s.onHome); } },
       retired ? { a: 'reactivate', label: t('lifecycle.reactivate.ok', 'Reactivate'), run: function () { reactivate(s.station, s.changed); } }
-        : { a: 'retire', label: t('lifecycle.retire.ok', 'Retire'), run: function () { retire(s.station, s.changed); } },
+        : { a: 'retire', label: t('lifecycle.retire.ok', 'Archive'), run: function () { retire(s.station, s.changed); } },
       retired && { a: 'delete', label: t('lifecycle.menu.delete', 'Delete…'), danger: true, run: function () { remove(s.station, [], s.deleted); } }
     ];
   }

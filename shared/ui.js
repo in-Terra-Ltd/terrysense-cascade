@@ -49,7 +49,7 @@ var ICON = {
 // The state chips of FRONTEND.md *Interface conventions*; `silenced` reads its time.
 function chipText(kind) {
   return {
-    retired: root.TerrySenseT('common.retired', 'Retired'), outofservice: root.TerrySenseT('common.outOfService', 'Out of service'),
+    retired: root.TerrySenseT('common.retired', 'Archived'), outofservice: root.TerrySenseT('common.outOfService', 'Out of service'),
     'private': root.TerrySenseT('common.private', 'Private'), nodevice: root.TerrySenseT('ui.chip.nodevice', 'No device yet'),
     waiting: root.TerrySenseT('ui.chip.waiting', 'Waiting for the link')
   }[kind];

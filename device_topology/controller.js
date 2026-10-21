@@ -294,8 +294,8 @@ function commandText(c) {
     SET_ENABLED: c.enabled ? t('device.cmdEnable', 'Enable{target}', { target: target }) : t('device.cmdDisable', 'Disable{target}', { target: target }),
     SELF_DIAG: t('device.selfDiag', 'Self-diagnostic'),
     REQUEST_REPORT: t('device.requestReports', 'Request reports') + (c.reports ? ': ' + c.reports.join(', ') : ''),
-    CREATE_SUBSCRIPTION: t('device.cmdSubscribe', 'Subscribe{target} every {s} s', { target: target, s: c.interval_s }),
-    DELETE_SUBSCRIPTION: t('device.cmdUnsubscribe', 'Remove subscription{target}', { target: target }),
+    CREATE_SUBSCRIPTION: t('device.cmdSubscribe', 'Send{target} every {s} s', { target: target, s: c.interval_s }),
+    DELETE_SUBSCRIPTION: t('device.cmdUnsubscribe', 'Stop sending{target}', { target: target }),
     PERIPHERAL_OP: t('device.cmdPeripheralOp', 'Peripheral operation{target}', { target: target }),
     SET_TRIGGER: c.trigger === 'none' ? t('device.cmdTriggerNone', 'Report{target} on its schedule only', { target: target })
       : t('device.cmdTrigger', 'Report{target} at once {rule}', { target: target, rule: ruleText(c.trigger, c.min_interval_s, c.level, unitOfTarget(c.target)) })
@@ -1405,7 +1405,7 @@ function verdict() {
   }
   var unstored = measurementRows().filter(function (r) { return r.unstored; }).length;
   var silent = measurementRows().filter(function (r) { return r.el.dataset.state === 'waiting'; }).length;
-  if (silent) { checks.push(silent === 1 ? t('device.checkWaitingOne', '1 subscribed measurement has sent nothing yet.') : t('device.checkWaitingMany', '{n} subscribed measurements have sent nothing yet.', { n: silent })); }
+  if (silent) { checks.push(silent === 1 ? t('device.checkWaitingOne', '1 measurement set to send has sent nothing yet.') : t('device.checkWaitingMany', '{n} measurements set to send have sent nothing yet.', { n: silent })); }
   if (!state.bindings.length) { checks.push(t('device.storedOnDeviceOnly', 'Its readings are stored on the device only.')); }
   else if (unstored) { checks.push(unstored === 1 ? t('device.checkUnstoredOne', '1 measurement is stored on no station.') : t('device.checkUnstoredMany', '{n} measurements are stored on no station.', { n: unstored })); }
   if (checks.length) {
@@ -1774,10 +1774,10 @@ function sourceRow(s, node, diagnostic) {
     latestCell(row, fmtValue(st.value), unit, t.ago(st.ts));
     stateChip(row, 'ok', t('common.ok', 'OK'), 'ok');
   } else if (st.state === 'disabled') {
-    latestCell(row, '—', '', t('device.switchedOff', 'subscription switched off'));
+    latestCell(row, '—', '', t('device.switchedOff', 'sending switched off'));
     stateChip(row, '', t('common.off', 'Off'), 'disabled');
   } else {
-    latestCell(row, '—', '', t('device.nothingReceived', 'subscribed, nothing received yet'));
+    latestCell(row, '—', '', t('device.nothingReceived', 'set to send, nothing received yet'));
     stateChip(row, 'warn', t('device.noReading', 'No reading'), 'waiting');
   }
   if (state.faults[s.sourceKey]) {
@@ -1890,7 +1890,7 @@ function positionGroup(pos, node, srcs, removed) {
   if (!g.rows.length) {
     var empty = mrow(true);
     empty.classList.add('empty');
-    empty.querySelector('.ts-row-label').textContent = t('device.positionEmpty', 'No subscription and no reading from this position.');
+    empty.querySelector('.ts-row-label').textContent = t('device.positionEmpty', 'Nothing sent and no reading from this position.');
     g.add({ el: empty, attention: odd, unstored: false });
   }
   if (odd) {
@@ -1933,7 +1933,7 @@ function confPart(place, title, hint, count, open) {
 
 /** The catalog measures of a position the LOGR does not subscribe; for a writer, each with its interval and *Subscribe*. */
 function notSentPart(pos, list) {
-  var el = confPart('notSent.' + pos, t('device.notSent', 'Not sent'), t('device.notSentHint', 'in the catalog, not subscribed: nothing reaches the cloud'), list.length);
+  var el = confPart('notSent.' + pos, t('device.notSent', 'Not sent'), t('device.notSentHint', 'in the catalog, not set to send: nothing reaches the cloud'), list.length);
   el.classList.add('ts-notsent');
   list.forEach(function (o) {
     var entry = state.names[o.measure.defaultName] || {};
@@ -1947,7 +1947,7 @@ function notSentPart(pos, list) {
       var iv = intervalInputs(900);
       every.appendChild(iv.el);
       var b = every.appendChild(h('<button type="button" class="ts-btn sm" data-a="subscribe"></button>'));
-      b.textContent = t('device.subscribe', 'Subscribe');
+      b.textContent = t('device.subscribe', 'Send');
       b.addEventListener('click', function () {
         var v = iv.seconds();
         if (!(v >= 1 && v <= 65535 && Math.floor(v) === v)) { ui.toast(t('device.intervalInvalid', 'An interval is a whole number of seconds, 1 to 65535'), 'error'); return; }
@@ -2134,7 +2134,7 @@ function drycLink(container) {
   }
   if (!opts.projectDashboardId) { return; }
   var b = container.appendChild(h('<button type="button" class="ts-btn sm" data-a="relays"><span></span>' + ICON.chev + '</button>'));
-  b.firstChild.textContent = t('device.drycView', 'Dry contact interface view');
+  b.firstChild.textContent = t('device.drycView', 'Digital I/O module view');
   b.title = st.station.name;
   b.addEventListener('click', function () { tb.openDashboard(opts.projectDashboardId, 'dryc', st.station); });
 }
@@ -2248,7 +2248,7 @@ function everyCell(cell, s, row, node) {
 
 function everyText(cell, s) {
   if (!subscribed(s)) {
-    cell.appendChild(h('<span class="ts-chip" data-subscribed="false"></span>')).textContent = t('device.notSubscribed', 'not subscribed');
+    cell.appendChild(h('<span class="ts-chip" data-subscribed="false"></span>')).textContent = t('device.notSubscribed', 'not sent');
   } else {
     var on = s.enabled === undefined || truthyFlag(s.enabled);
     var every = cell.appendChild(h('<span class="ts-tsrc-every"></span>'));
@@ -2299,7 +2299,7 @@ function editCell(cell, s, row, node) {
   var current = Number(s.interval) || 0;
   if (!subscribed(s)) {
     var sub = cell.appendChild(h('<label class="ts-switch ts-src-sub"><input type="checkbox"><span></span></label>'));
-    sub.querySelector('span').textContent = t('device.subscribe', 'Subscribe');
+    sub.querySelector('span').textContent = t('device.subscribe', 'Send');
     var iv = intervalInputs(d.create ? d.create : 900);
     cell.appendChild(iv.el);
     var box = sub.querySelector('input');
@@ -2323,7 +2323,7 @@ function editCell(cell, s, row, node) {
   var ivs = intervalInputs(d.interval || current);
   cell.appendChild(ivs.el);
   var remove = cell.appendChild(h('<button type="button" class="ts-icon-btn" data-a="remove">' + ICON.close + '</button>'));
-  remove.title = t('device.removeSubscription', 'Remove this subscription');
+  remove.title = t('device.removeSubscription', 'Stop sending');
   var rule = triggersOf(s).length ? ruleEditor(s, node, d.rule) : null;
   if (rule) { cell.appendChild(advanced(s, rule.el, !!d.rule)); }
   function update() {
@@ -2520,7 +2520,7 @@ function updateEditBar() {
   if (!editBarEl) { return; }
   var cmds = allDraftCommands();
   editBarEl.querySelector('.ts-editbar-count').textContent = cmds.length === 1 ? t('device.changeOne', '1 change') : t('device.changeMany', '{n} changes', { n: cmds.length });
-  editBarEl.querySelector('.ts-editbar-list').textContent = cmds.length ? cmds.map(commandText).join(' · ') : t('device.editHint', 'Switch, set or remove subscriptions above; they go out together.');
+  editBarEl.querySelector('.ts-editbar-list').textContent = cmds.length ? cmds.map(commandText).join(' · ') : t('device.editHint', 'Switch, set or stop sending measurements above; the changes go out together.');
   editBarEl.querySelector('[data-a=send-edits]').disabled = !cmds.length;
   editBarEl.hidden = !cmds.length;
 }
@@ -2836,9 +2836,9 @@ function detailsPart() {
     row('Reporting', t('device.statReporting', 'Reporting'), DEVICE, [
       hasStatus ? t('device.uplinkEvery', 'Uplink every {d}', { d: fmtDuration(c['status.baseIntervalSeconds']) }) : t('device.uplinkUnknown', 'Uplink interval not reported'),
       subs.length
-        ? (subs.length === 1 ? t('device.subscriptionOne', '1 subscription') : t('device.subscriptionMany', '{n} subscriptions', { n: subs.length })) +
+        ? (subs.length === 1 ? t('device.subscriptionOne', '1 measurement sent') : t('device.subscriptionMany', '{n} measurements sent', { n: subs.length })) +
           (intervals.length ? t('device.subsEvery', ', every {d}', { d: fmtDuration(lo) }) + (hi !== lo ? t('device.subsTo', ' to {d}', { d: fmtDuration(hi) }) : '') : '')
-        : t('device.noSubscription', 'No subscription reported')
+        : t('device.noSubscription', 'No sent measurement reported')
     ]);
   }
   var net = [];

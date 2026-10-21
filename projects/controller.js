@@ -376,7 +376,7 @@ function metaText(entry) {
   var n = inService(entry).length, gone = entry.stations.length - n, alarmed = inAlarm(entry);
   var parts = entry.latLng ? [] : [t('common.noPosition', 'No position')];
   parts.push(n === 1 ? t('common.stationOne', '1 station') : t('common.stationMany', '{n} stations', { n: n }));
-  if (gone) { parts.push(t('common.retiredCount', '{n} retired', { n: gone })); }
+  if (gone) { parts.push(t('common.retiredCount', '{n} archived', { n: gone })); }
   if (alarmed) { parts.push(t('projects.inAlarm', '{n} in alarm', { n: alarmed })); }
   return parts.join(' · ');
 }

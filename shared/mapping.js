@@ -36,14 +36,14 @@ var DRYC_FIELD = /^p\d+\.dryc(Input\d|Output\d|Voltage|RuleCount|RulesSynced|Rul
 // The sensors a LOGR2 can carry, by the peripheral prefix of its device keys
 // (`cond.temperature`): cloud-integrations/sources/logr2.json, kept equal by
 // smoke_test_config_widgets.py. `logr` is the LOGR itself.
-var LOGR2_SENSORS = { phpr: 'pH probe', cond: 'Conductivity probe', dryc: 'Dry contact interface', flow: 'Flow meter',
+var LOGR2_SENSORS = { phpr: 'pH probe', cond: 'Conductivity probe', dryc: 'Digital I/O module', flow: 'Flow meter',
   clmt: 'Climate sensor', inclTilt: 'Inclinometer or tiltmeter', usonRdar: 'Ultrasonic or radar level sensor' };
 
 /** A LOGR2 sensor's name in the reader's language; LOGR2_SENSORS holds the English. */
 function sensorLabel(prefix) {
   return {
     phpr: t('mapping.logr2.phpr', 'pH probe'), cond: t('mapping.logr2.cond', 'Conductivity probe'),
-    dryc: t('common.dryc', 'Dry contact interface'), flow: t('mapping.logr2.flow', 'Flow meter'),
+    dryc: t('common.dryc', 'Digital I/O module'), flow: t('mapping.logr2.flow', 'Flow meter'),
     clmt: t('mapping.logr2.clmt', 'Climate sensor'), inclTilt: t('mapping.logr2.inclTilt', 'Inclinometer or tiltmeter'),
     usonRdar: t('mapping.logr2.usonRdar', 'Ultrasonic or radar level sensor')
   }[prefix] || LOGR2_SENSORS[prefix];

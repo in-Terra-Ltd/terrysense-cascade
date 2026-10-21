@@ -248,7 +248,7 @@ function kindLabel(kind) {
 }
 
 function stationStatus() {
-  if (state.service.retired) { return { id: 'retired', label: t('common.retired', 'Retired'), color: 'var(--ts-nodata)' }; }
+  if (state.service.retired) { return { id: 'retired', label: t('common.retired', 'Archived'), color: 'var(--ts-nodata)' }; }
   var sev = worst(state.channels.map(function (c) { return c.alarm; }).concat(state.alarms.map(function (a) { return a.severity; })));
   if (sev) { return { id: 'alarm', label: G.severity(sev.toLowerCase()).label, color: 'var(--sev-' + sev.toLowerCase() + ')' }; }
   var last = state.channels.reduce(function (m, c) { return Math.max(m, c.latest ? c.latest.ts : 0); }, 0);
@@ -601,7 +601,7 @@ function flowRow(device, it) {
     ch.dataset.a = 'map';
     clickable(ch, c ? t('station.changeChannel', 'Change the channel') : t('station.storeThis', 'Store this measurement'), function () { mapDrawer(device, r, c); });
   } else if (c && device && M.DRYC_KEY.test(it.key)) {
-    ch.title = t('station.setInDryc', 'Set in the dry contact interface view');
+    ch.title = t('station.setInDryc', 'Set in the digital I/O module view');
   }
   return el;
 }
@@ -923,7 +923,7 @@ function hasDryc() {
  * it matches and its alarm, and the way to the Dry contact interface view. */
 function renderRules() {
   if (!hasDryc()) { return; }
-  var sec = mainEl.appendChild(h('<div class="ts-section ts-stv-rules"><div class="ts-section-head">' + esc(t('station.rules', 'Dry contact interface rules')) + '<span class="ts-spacer"></span></div></div>'));
+  var sec = mainEl.appendChild(h('<div class="ts-section ts-stv-rules"><div class="ts-section-head">' + esc(t('station.rules', 'Digital I/O module rules')) + '<span class="ts-spacer"></span></div></div>'));
   if (opts.projectDashboardId) {
     sec.firstChild.appendChild(h('<button type="button" class="ts-btn" data-a="dryc">' + ICON.settings +
       esc(state.canWrite ? t('station.setUpRules', 'Set up inputs and rules') : t('station.inputsRules', 'Inputs and rules')) + '</button>')).addEventListener('click', function () {

@@ -162,7 +162,7 @@ function build(ctx, tb, ui, card, opts) {
     },
     relays: function (e) {
       if (e.kind !== 'Station') { return; }
-      var go = function () { button('relays', ICON_RELAY, t('common.dryc', 'Dry contact interface'), function () { tb.openDashboard(opts.projectDashboardId, 'dryc', e); }); };
+      var go = function () { button('relays', ICON_RELAY, t('common.dryc', 'Digital I/O module'), function () { tb.openDashboard(opts.projectDashboardId, 'dryc', e); }); };
       return tb.attrsMap(e).then(function (attrs) {
         if (attrs['dryc.rules']) { go(); return null; }
         // A device has a DRYC once it has reported a reading of one: `dryc.` on a LOGR2, `p<POS>.dryc…` on a LOGR4.

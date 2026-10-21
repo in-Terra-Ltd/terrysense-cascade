@@ -62,7 +62,7 @@ var LOGR2_SENSORS = {
 function logr2SensorNames() {
   return {
     phpr: t('mapping.logr2.phpr', 'pH probe'), cond: t('mapping.logr2.cond', 'Conductivity probe'),
-    dryc: t('common.dryc', 'Dry contact interface'), flow: t('mapping.logr2.flow', 'Flow meter'),
+    dryc: t('common.dryc', 'Digital I/O module'), flow: t('mapping.logr2.flow', 'Flow meter'),
     clmt: t('mapping.logr2.clmt', 'Climate sensor'), inclTilt: t('mapping.logr2.inclTilt', 'Inclinometer or tiltmeter'),
     usonRdar: t('mapping.logr2.usonRdar', 'Ultrasonic or radar level sensor')
   };

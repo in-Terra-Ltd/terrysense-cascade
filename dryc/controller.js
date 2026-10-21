@@ -239,8 +239,8 @@ function matching(r) {
 function syncState() {
   var want = JSON.stringify(records(normalise(parseJson(state.saved))));
   var n = JSON.parse(want).length;
-  if (!state.device) { return { s: 'nodevice', short: t('common.noDevice', 'No device'), text: t('dryc.syncNoDevice', 'No dry contact interface feeds this station. The rules are kept here and sent once one is connected.') }; }
-  if (nano() && !state.position) { return { s: 'nodevice', short: t('dryc.noInterface', 'No interface reported'), text: t('dryc.syncNoPosition', 'The device reports no dry contact interface on its bus. Rules are sent once it reports one.') }; }
+  if (!state.device) { return { s: 'nodevice', short: t('common.noDevice', 'No device'), text: t('dryc.syncNoDevice', 'No digital I/O module feeds this station. The rules are kept here and sent once one is connected.') }; }
+  if (nano() && !state.position) { return { s: 'nodevice', short: t('dryc.noInterface', 'No interface reported'), text: t('dryc.syncNoPosition', 'The device reports no digital I/O module on its bus. Rules are sent once it reports one.') }; }
   var queued = parseJson(state.server['cmd.pending']);
   var pending = queued && (queued.commands || []).some(isRulesCommand)
     ? { issuedAt: queued.updatedAt || queued.issuedAt } : null;
@@ -461,8 +461,8 @@ function sendRules() {
   var recs = records(state.rules);
   var device = esc(state.device.label || state.device.name);
   ui.confirm(recs.length === 1
-    ? t('dryc.sendConfirmOne', 'Send 1 record to the dry contact interface of <b>{device}</b>? They replace the rules it runs now, after the logger’s next uplink.', { device: device })
-    : t('dryc.sendConfirmMany', 'Send {n} records to the dry contact interface of <b>{device}</b>? They replace the rules it runs now, after the logger’s next uplink.', { n: recs.length, device: device }),
+    ? t('dryc.sendConfirmOne', 'Send 1 record to the digital I/O module of <b>{device}</b>? They replace the rules it runs now, after the logger’s next uplink.', { device: device })
+    : t('dryc.sendConfirmMany', 'Send {n} records to the digital I/O module of <b>{device}</b>? They replace the rules it runs now, after the logger’s next uplink.', { n: recs.length, device: device }),
     t('common.send', 'Send')).then(function (ok) {
     if (!ok) { return; }
     var command = nano() ? { op: 'PERIPHERAL_OP', target: { mode: 'POSITION', position: state.position }, dryc_rules: drycRules(recs) }
@@ -481,7 +481,7 @@ function errText(err) { return (err && (err.message || (err.error && err.error.m
 
 root.innerHTML = '';
 var cardEl = h('<div class="ts-card ts-dryc"><div class="ts-head"><div class="ts-head-icon">' + ICON.settings + '</div><div class="ts-head-text">' +
-  '<div class="ts-title"><span>' + esc(t('common.dryc', 'Dry contact interface')) + '</span> ' + info('drycRules') + '</div><div class="ts-subtitle"></div></div>' +
+  '<div class="ts-title"><span>' + esc(t('common.dryc', 'Digital I/O module')) + '</span> ' + info('drycRules') + '</div><div class="ts-subtitle"></div></div>' +
   '<span class="ts-dryc-state" hidden></span></div>' +
   '<div class="ts-body"><div class="ts-loading">' + esc(t('common.loading', 'Loading…')) + '</div></div>' +
   '<div class="ts-foot" hidden><span class="ts-summary"></span><span class="ts-spacer"></span><button type="button" class="ts-btn">' + ICON.reset + esc(t('common.refresh', 'Refresh')) + '</button></div></div>');
@@ -526,7 +526,7 @@ function render() {
     t('dryc.intro', 'The device switches its relays itself, from the rules it was sent. Rules are kept on this station: name the inputs wired on site, write the rules, then send them to the device.');
   if (state.others.length) {
     var warn = h('<div class="ts-banner warn" data-warn="competing">' + ICON.info + '<span></span></div>');
-    warn.querySelector('span').innerHTML = t('dryc.competing', 'Rules for this dry contact interface are also kept on <b>{stations}</b>. The device runs whichever set was sent last: keep them on one station.',
+    warn.querySelector('span').innerHTML = t('dryc.competing', 'Rules for this digital I/O module are also kept on <b>{stations}</b>. The device runs whichever set was sent last: keep them on one station.',
       { stations: state.others.map(function (o) { return esc(o.name); }).join('</b>, <b>') });
     bodyEl.appendChild(warn);
   }
@@ -559,9 +559,9 @@ function firmwareBanners() {
     banner('warn', 'logger-fw', t('dryc.loggerFw', 'Logger firmware {version}. Update it to {min} or later to confirm the rules the device holds and to use supply-voltage conditions. Until then the view compares only the number of rules.',
       { version: version(cap.logger), min: loggerMin() }));
   } else if (nano() && !cap.dryc && blocked) {
-    banner('warn', 'dryc-fw-unknown', esc(t('dryc.drycFwUnknown', 'A supply-voltage condition needs dry contact interface firmware {min} or later, which this logger does not report. An older interface refuses the rules, and this view then shows Refused.', { min: DRYC_FW_MIN })));
+    banner('warn', 'dryc-fw-unknown', esc(t('dryc.drycFwUnknown', 'A supply-voltage condition needs digital I/O module firmware {min} or later, which this logger does not report. An older module refuses the rules, and this view then shows Refused.', { min: DRYC_FW_MIN })));
   } else if (!cap.drycOk) {
-    banner('warn', 'dryc-fw', t('dryc.drycFw', 'Dry contact interface firmware {version}. Update it to {min} or later to confirm the rules it holds and to use supply-voltage conditions.',
+    banner('warn', 'dryc-fw', t('dryc.drycFw', 'Digital I/O module firmware {version}. Update it to {min} or later to confirm the rules it holds and to use supply-voltage conditions.',
       { version: version(cap.dryc), min: DRYC_FW_MIN }));
   }
   return out;
@@ -793,8 +793,8 @@ function ruleDrawer(idx) {
   voltState();
   volt.querySelector('.ts-field-hint').textContent = cap.voltage
     ? t('dryc.voltHint', 'Checked by the device together with the inputs. It reacts once the voltage has stayed past the threshold for a few seconds.')
-    : !state.device ? t('dryc.voltNeedsDevice', 'Needs a device on this station that runs logger firmware {loggerMin} and dry contact interface firmware {drycMin}.', { loggerMin: LOGGER_FW_MIN, drycMin: DRYC_FW_MIN })
-    : t('dryc.voltNeedsFw', 'Needs logger firmware {loggerMin} and dry contact interface firmware {drycMin}. This device reports {logger} and {dryc}.', {
+    : !state.device ? t('dryc.voltNeedsDevice', 'Needs a device on this station that runs logger firmware {loggerMin} and digital I/O module firmware {drycMin}.', { loggerMin: LOGGER_FW_MIN, drycMin: DRYC_FW_MIN })
+    : t('dryc.voltNeedsFw', 'Needs logger firmware {loggerMin} and digital I/O module firmware {drycMin}. This device reports {logger} and {dryc}.', {
       loggerMin: loggerMin(), drycMin: DRYC_FW_MIN,
       logger: cap.logger || t('dryc.noLoggerVersion', 'no logger version'), dryc: cap.dryc || t('dryc.noDrycVersion', 'no interface version') });
   volt.hidden = !cap.voltage && !curV;
@@ -934,7 +934,7 @@ function poll() {
 }
 
 tb.boundDatasource().then(function (ds) {
-  if (!ds || ds.entityType !== 'ASSET') { fail(t('dryc.openFromStation', 'Open the dry contact interface from its station.')); return; }
+  if (!ds || ds.entityType !== 'ASSET') { fail(t('dryc.openFromStation', 'Open the digital I/O module from its station.')); return; }
   return tb.loadEntity(ds).then(function (station) {
     if (station.kind !== 'Station') { fail(t('dryc.notStation', 'This view shows a station; {name} is a {kind}.', { name: station.name, kind: station.kind })); return null; }
     state.station = station;

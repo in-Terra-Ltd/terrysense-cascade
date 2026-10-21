@@ -45,7 +45,7 @@ var STATUS = {
   nodata: { label: t('common.noData', 'No data'), color: 'var(--ts-nodata)', rank: 2 },
   ok: { label: t('common.ok', 'OK'), color: 'var(--ts-ok)', rank: 1 },
   none: { label: t('common.noStation', 'No station'), color: 'var(--ts-nodata)', rank: 0 },
-  retired: { label: t('common.retired', 'Retired'), color: 'var(--ts-nodata)', rank: -1 }
+  retired: { label: t('common.retired', 'Archived'), color: 'var(--ts-nodata)', rank: -1 }
 };
 var ICON_LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>';
 var ICON_GLOBE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>';
@@ -506,7 +506,7 @@ function renderHeader() {
   var e = state.entity, n = active().length, gone = retiredOnes().length;
   cardEl.querySelector('.ts-proj-pname').textContent = e.name;
   cardEl.querySelector('.ts-proj-count').textContent = ' · ' + (n === 1 ? t('common.stationOne', '1 station') : t('common.stationMany', '{n} stations', { n: n })) +
-    (gone ? ' · ' + t('common.retiredCount', '{n} retired', { n: gone }) : '');
+    (gone ? ' · ' + t('common.retiredCount', '{n} archived', { n: gone }) : '');
   var worstEl = cardEl.querySelector('.ts-proj-worst');
   worstEl.innerHTML = '';
   if (n) { worstEl.appendChild(chip(worstOf(active()))); }
@@ -561,8 +561,8 @@ function renderList() {
 function retiredFold(gone) {
   var fold = h('<details class="ts-proj-loc ts-proj-retired"><summary class="ts-proj-group"><span class="ts-proj-group-icon">' + ICON.archive + '</span>' +
     '<span class="ts-proj-group-name"></span></summary><div class="ts-proj-loc-body">' +
-    '<label class="ts-switch ts-proj-showretired"><input type="checkbox" data-a="show-retired"> ' + esc(t('overview.showRetired', 'Show retired on the map')) + '</label></div></details>');
-  fold.querySelector('.ts-proj-group-name').textContent = t('overview.retiredFold', 'Retired ({n})', { n: gone.length });
+    '<label class="ts-switch ts-proj-showretired"><input type="checkbox" data-a="show-retired"> ' + esc(t('overview.showRetired', 'Show archived on the map')) + '</label></div></details>');
+  fold.querySelector('.ts-proj-group-name').textContent = t('overview.retiredFold', 'Archived ({n})', { n: gone.length });
   fold.open = !!state.retiredOpen;
   fold.addEventListener('toggle', function () { state.retiredOpen = fold.open; });
   var box = fold.querySelector('input');
@@ -727,7 +727,7 @@ function openExport() {
   var e = state.entity, all = state.stations;
   var drawer = ui.openDrawer(esc(t('overview.exportTitle', 'Export data')), esc(e.name));
   var line = drawer.body.appendChild(h('<p class="ts-proj-export"></p>'));
-  line.textContent = t('overview.exportIntro', 'The readings of every station, retired ones too, over their whole history, with each channel\u2019s label and unit, in one ZIP. Keep this page open until the download starts.');
+  line.textContent = t('overview.exportIntro', 'The readings of every station, archived ones too, over their whole history, with each channel\u2019s label and unit, in one ZIP. Keep this page open until the download starts.');
   var withSettings = null;
   if (state.me.authority === 'TENANT_ADMIN') {
     var box = h('<label class="ts-switch"><input type="checkbox" data-f="settings"> <span></span></label>');
