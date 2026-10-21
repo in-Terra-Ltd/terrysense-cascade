@@ -57,7 +57,7 @@ var BOOK = resolver.CONTACT_BOOK_KEY;
 var BOOK_NAME = 'terrySense contact book';
 // Assets that never hold a contact list (ATTRIBUTES.md §4, §7).
 var NOT_HOLDERS = ['Defaults', resolver.DEVICE_DEFAULTS_KIND, resolver.CONTACT_BOOK_KIND];
-var LEVEL_ORDER = ['project', 'location', 'station'];
+var LEVEL_ORDER = ['project', 'station'];
 
 var state = {
   origin: null, own: {}, ancestors: [], names: {}, kinds: {}, channelKinds: {},
@@ -116,7 +116,6 @@ function kindName(kind) {
   switch (kind) {
     case 'Customer': return t('common.customer', 'Customer');
     case 'Project': return t('common.project', 'Project');
-    case 'Location': return t('common.location', 'Location');
     case 'Station': return t('common.station', 'Station');
     case 'Defaults': return t('settings.kindDefaults', 'Defaults');
     case 'DeviceDefaults': return t('settings.kindDeviceDefaults', 'DeviceDefaults');
@@ -606,7 +605,6 @@ function lowerFor(keys) {
 function levelCount(k, n) {
   switch (k) {
     case 'project': return n === 1 ? t('common.projectOne', '1 project') : t('settings.projectMany', '{n} projects', { n: n });
-    case 'location': return n === 1 ? t('settings.locationOne', '1 location') : t('settings.locationMany', '{n} locations', { n: n });
     case 'station': return n === 1 ? t('common.stationOne', '1 station') : t('common.stationMany', '{n} stations', { n: n });
     default: return n + ' ' + k + (n > 1 ? 's' : '');
   }

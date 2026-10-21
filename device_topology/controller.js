@@ -1799,7 +1799,7 @@ function readingRow(key, diagnostic, bus) {
   conf.dataset.confReading = key;
   row.querySelector('.ts-row-label').textContent = labelOf(key);
   conf.querySelector('.ts-row-label').textContent = labelOf(key);
-  nameSub(conf, key + (entryOf(key) ? '' : ' · ' + t('device.notInDictionary', 'not in the dictionary')), 'ts-mono');
+  nameSub(conf, key + (entryOf(key) ? '' : ' · ' + t('device.notInDictionary', 'not in the vocabulary')), 'ts-mono');
   latestCell(row, fmtValue(v.value), readingUnit(key), t.ago(v.ts));
   var unstored = storeCell(conf, key, diagnostic);
   return { el: row, conf: conf, attention: false, unstored: unstored };
