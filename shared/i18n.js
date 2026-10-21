@@ -4,9 +4,10 @@
  *
  * `t(key, english, params)` is the text of `custom.terrysense.ui.<key>` in the
  * reader's ThingsBoard language, else `english`; `{name}` placeholders take
- * `params`. The English lives at the call site, the other languages in
+ * `params`. Every language, English included, is
  * `resources/i18n/<lang>/<namespace>.json`, pushed to the tenant's custom translation by
- * `scripts/push_translations.py`. Contract: logr-product-docs/cloud/I18N.md.
+ * `scripts/push_translations.py`; `english` is its copy, kept equal by
+ * `scripts/sync_i18n_defaults.py`. Contract: logr-product-docs/cloud/I18N.md.
  *
  * Loads first: every other shared script reads `window.TerrySenseT`.
  */
