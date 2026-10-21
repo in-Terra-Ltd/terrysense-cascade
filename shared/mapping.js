@@ -207,12 +207,22 @@ function namesForKind(m, kind, mapped) {
     });
 }
 
-/** The names a reading can be stored under: its own name first, then the other
- * vocabulary names of its kind. */
-function namesForReading(m, key, mapped) {
+/** The names a source may be stored under (vocabulary.md §7): its own name
+ * first; the other names of its kind only when the kind is renamable, and only
+ * those as much about the hardware as the source. A source with no name of its
+ * own is offered its kind's. */
+function offeredNames(m, kind, own, hardware, mapped) {
+  var spec = resolver.kindSpec(kind, m.kinds) || {};
+  if (own && ((m.names[own] || {}).fixed || spec.renamable === false)) { return [own]; }
+  if (!own) { return namesForKind(m, kind, mapped); }
+  return [own].concat(namesForKind(m, kind, mapped).filter(function (n) {
+    return n !== own && aboutDevice(m.names[n]) === hardware;
+  }));
+}
+
+function namesForReading(m, key, mapped, hardware) {
   var own = nameOf(m, key), e = entryOf(m, key);
-  if (e && e.fixed) { return [own]; }
-  return [own].concat(e ? namesForKind(m, camel(e.kind), mapped).filter(function (n) { return n !== own; }) : []);
+  return e ? offeredNames(m, camel(e.kind), own, hardware, mapped) : [own];
 }
 
 /** What a station can take from the device: one row per measurement, with the
@@ -227,7 +237,7 @@ function mappable(m, mapped) {
     return [].concat.apply([], parts.map(function (part) {
       return part.keys.map(function (key) {
         return { key: key, label: labelOf(m, key), unit: readingUnit(m, key), group: part.id, groupLabel: part.label || t('mapping.logrItself', 'LOGR itself'),
-                 names: namesForReading(m, key, mapped), name: nameOf(m, key),
+                 names: namesForReading(m, key, mapped, part.id === 'logr' || aboutDevice(entryOf(m, key))), name: nameOf(m, key),
                  diagnostic: part.id === 'logr' || aboutDevice(entryOf(m, key)) };
       });
     }));
@@ -236,16 +246,17 @@ function mappable(m, mapped) {
   function late(s) { return fromEarlier(m, s, nodes[s.position]) ? 1 : 0; }
   return sources(m).sort(function (a, b) { return a.position - b.position || late(a) - late(b) || a.sourceKey.localeCompare(b.sourceKey); }).map(function (s) {
     var node = nodes[s.position], p = node && m.peripherals[node.type], earlier = fromEarlier(m, s, node);
-    var x = earlier ? null : measureOf(m, s, node);
-    var name = x && m.names[x.defaultName] && !retiredName(m, x.defaultName) ? x.defaultName
-      : namesForKind(m, s.kind, mapped).filter(function (n) { return !retiredName(m, n); })[0] || null;
+    var x = earlier ? null : measureOf(m, s, node), hardware = diagnostic(m, s, node);
+    var own = x && m.names[x.defaultName] && !retiredName(m, x.defaultName) ? x.defaultName : null;
+    var names = offeredNames(m, s.kind, own, hardware, mapped);
+    var name = own || names.filter(function (n) { return !retiredName(m, n); })[0] || null;
     return {
       key: s.sourceKey, label: sourceLabel(m, s, earlier ? null : node), unit: unitOf(m, s), group: 'p' + s.position + (earlier ? '.earlier' : ''),
       groupLabel: earlier ? t('mapping.earlierAt', '{pos} · earlier peripheral', { pos: s.position })
         : s.position === 0 ? t('mapping.logrItself', 'LOGR itself')
         : s.position + ' · ' + (p ? p.displayName : node ? node.type : t('mapping.unknownPeripheral', 'Unknown peripheral')),
       earlier: earlier,
-      names: namesForKind(m, s.kind, mapped), name: name, diagnostic: diagnostic(m, s, node) || !!(name && aboutDevice(m.names[name]))
+      names: names, name: name, diagnostic: hardware || !!(name && aboutDevice(m.names[name]))
     };
   }).filter(function (r) { return r.names.length && !DRYC_KEY.test(r.key); });
 }

@@ -261,7 +261,6 @@ var logr2Parts = M.logr2Parts;
 
 /** The names this device's channels carry on its stations. */
 function mappedNames() { return M.mappedNames(state.device.id.id, state.bindings.map(function (b) { return b.entries; })); }
-function namesForKind(kind) { return M.namesForKind(model(), kind, mappedNames()); }
 function mappable() { return M.mappable(model(), mappedNames()); }
 
 // -- commands (CA-4, TC-8/9) ---------------------------------------------------------------
