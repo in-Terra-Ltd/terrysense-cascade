@@ -437,7 +437,7 @@ function renderHead() {
 function sourceKeysOf(origin) {
   var skip = /^(uplinkTriggered|uplinkCause|uplinkLatest|rssi|snr|service\.silencedNotice)$|\.status$/;
   var devices = origin.entityType === 'DEVICE' ? Promise.resolve([origin])
-    : (io.fetchProfileDevices ? io.fetchProfileDevices(origin.name) : Promise.resolve([])).then(function (l) { return l.slice(0, 8); });
+    : (io.fetchProfileDevices ? io.fetchProfileDevices(origin.key || origin.name) : Promise.resolve([])).then(function (l) { return l.slice(0, 8); });
   return devices.then(function (list) {
     return Promise.all(list.map(function (d) {
       return tb.get('/api/plugins/telemetry/DEVICE/' + d.id + '/keys/timeseries').catch(function () { return []; });

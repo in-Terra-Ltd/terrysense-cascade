@@ -650,7 +650,7 @@ function affectedStations(entity, io) {
   var kind = String(entity.kind || '').toLowerCase();
   if (kind === 'station' || entity.entityType === 'DEVICE') { return Promise.resolve([entity]); }
   if (entity.kind === DEVICE_DEFAULTS_KIND) {
-    return io.fetchProfileDevices ? Promise.resolve(io.fetchProfileDevices(entity.name)) : Promise.resolve([]);
+    return io.fetchProfileDevices ? Promise.resolve(io.fetchProfileDevices(entity.key || entity.name)) : Promise.resolve([]);
   }
   if (entity.entityType === 'CUSTOMER') {
     return io.fetchCustomerStations ? Promise.resolve(io.fetchCustomerStations(entity)) : Promise.resolve([]);

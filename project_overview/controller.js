@@ -446,8 +446,7 @@ function openAdd() {
 function addStation(name, latLng) {
   tb.createStation(name, state.entity, { latitude: latLng[0], longitude: latLng[1] }).then(function (station) {
     state.followUps[station.id] = true;
-    ui.toast(t('overview.added', '{name} added', { name: name }));
-    return refresh();
+    return life.stationAdded(state.entity, station, t('overview.added', '{name} added', { name: name })).then(refresh);
   }).catch(function (err) { ui.toast(t('overview.addFailed', 'Station not added: {error}', { error: errText(err) }), 'error'); });
 }
 

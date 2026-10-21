@@ -154,7 +154,7 @@ function build(ctx, tb, ui, card, opts) {
       if (e.kind !== 'Station' || tb.isPublicView()) { return; }
       return tb.containedDevices(e).then(function (list) {
         return Promise.all(list.map(function (d) {
-          return tb.get('/api/device/' + d.id).then(function (x) { return { entityType: 'DEVICE', id: d.id, name: x.name }; }).catch(function () { return null; });
+          return tb.get('/api/device/' + d.id).then(function (x) { return { entityType: 'DEVICE', id: d.id, name: x.label || x.name }; }).catch(function () { return null; });
         }));
       }).then(function (devices) {
         devices.filter(Boolean).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(open);
@@ -252,7 +252,7 @@ function build(ctx, tb, ui, card, opts) {
     if (!ds) { return Promise.resolve(null); }
     if (ds.entityType === 'DEVICE') {
       return tb.get('/api/device/' + ds.entityId).then(function (d) {
-        return { entityType: 'DEVICE', id: ds.entityId, name: d.name, kind: d.type };
+        return { entityType: 'DEVICE', id: ds.entityId, name: d.label || d.name, kind: d.type };
       });
     }
     return tb.loadEntity(ds);

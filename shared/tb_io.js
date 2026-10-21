@@ -62,8 +62,9 @@ root.TerrySenseTbIo = function (ctx) {
   }
 
   function getAsset(id) { return toPromise(getService('assetService').getAsset(id)); }
-  function assetLevel(a) { return { entityType: 'ASSET', id: a.id.id, name: a.name, kind: a.type }; }
-  function deviceLevel(d) { return { entityType: 'DEVICE', id: d.id.id, name: d.name, kind: d.type }; }
+  // `name` is what the user reads, `key` the generated name (ENTITY_MODEL.md *Names and labels*).
+  function assetLevel(a) { return { entityType: 'ASSET', id: a.id.id, name: a.label || a.name, key: a.name, kind: a.type }; }
+  function deviceLevel(d) { return { entityType: 'DEVICE', id: d.id.id, name: d.label || d.name, key: d.name, kind: d.type }; }
 
   function relatedAssets(entityId, direction) {
     var query = {
@@ -326,7 +327,7 @@ root.TerrySenseTbIo = function (ctx) {
 
   function viewStates(stateId, entity, extra) {
     return [{ id: 'default', params: {} },
-      { id: stateId, params: Object.assign({ entityId: { entityType: entity.entityType || 'ASSET', id: entity.id }, entityName: entity.name }, extra) }];
+      { id: stateId, params: Object.assign({ entityId: { entityType: entity.entityType || 'ASSET', id: entity.id }, entityName: entity.key || entity.name, entityLabel: entity.name }, extra) }];
   }
 
   /** Open view `stateId` of dashboard `dashboardId` on `entity`, above its
@@ -376,10 +377,92 @@ root.TerrySenseTbIo = function (ctx) {
     return get('/api/' + entityPath(entity) + '/' + entity.id).then(function (e) { return e.ownerId; });
   }
 
-  function renameEntity(entity, name) {
-    var path = '/api/' + entityPath(entity);
-    return get(path + '/' + entity.id).then(function (e) { return post(path, Object.assign(e, { name: name })); })
-      .then(function () { entity.name = name; });
+  // -- names and labels (ENTITY_MODEL.md *Names and labels*) ----------------------
+
+  var naming = root.TerrySenseNaming;
+
+  /** The owner's customer code; a customer without a valid one cannot name anything. */
+  function customerCode(owner) {
+    if (owner.entityType !== 'CUSTOMER') { return Promise.resolve(naming.TENANT_CODE); }
+    return attrsMap({ entityType: 'CUSTOMER', id: owner.id }).then(function (a) {
+      var code = a['config.customerCode'];
+      if (!naming.validCode(code)) {
+        throw new Error(root.TerrySenseT('lifecycle.noCode', 'The customer has no customer code: a tenant admin sets it first'));
+      }
+      return code;
+    });
+  }
+
+  /** The first of `build(1)`, `build(2)`… no other asset carries. Listed by
+   * `prefix` rather than tried, since a refused save raises ThingsBoard's error popup. */
+  function freeName(prefix, build, selfId) {
+    return getAll('/api/user/assets', { textSearch: prefix }).then(function (list) {
+      var taken = {};
+      list.forEach(function (a) { if (a.id.id !== selfId) { taken[a.name] = true; } });
+      var n = 1;
+      while (taken[build(n)]) { n++; }
+      return build(n);
+    });
+  }
+
+  function projectNameFor(owner, label, selfId) {
+    return customerCode(owner).then(function (code) {
+      return freeName(code + '_', function (n) { return naming.projectName(code, label, n); }, selfId);
+    });
+  }
+
+  function stationNameFor(projectKey, label, selfId) {
+    return freeName(projectKey + '_', function (n) { return naming.stationName(projectKey, label, n); }, selfId);
+  }
+
+  function saveAsset(asset, fields) {
+    return post('/api/asset', Object.assign(asset, fields));
+  }
+
+  /** The station's name rebuilt under `projectId`, its label kept or replaced by `label`. */
+  function renameStation(stationId, projectId, label) {
+    return Promise.all([getAsset(stationId), getAsset(projectId)]).then(function (got) {
+      var s = got[0], text = label === undefined ? s.label || s.name : label;
+      return stationNameFor(got[1].name, text, s.id.id).then(function (name) { return saveAsset(s, { name: name, label: text }); });
+    });
+  }
+
+  /** The project's name rebuilt, its label kept or replaced by `label`, then each of its stations'. */
+  function renameProject(projectId, label) {
+    return getAsset(projectId).then(function (p) {
+      var text = label === undefined ? p.label || p.name : label;
+      return projectNameFor(p.ownerId, text, p.id.id).then(function (name) { return saveAsset(p, { name: name, label: text }); });
+    }).then(function (saved) {
+      return relatedAssets(saved.id.id, 'FROM').then(function (children) {
+        return children.filter(function (a) { return a.type === 'Station'; }).reduce(function (done, s) {
+          return done.then(function () { return renameStation(s.id.id, saved.id.id); });
+        }, Promise.resolve());
+      }).then(function () { return saved; });
+    });
+  }
+
+  /** Give a project or station the label `label`, its name rebuilt from it. */
+  function relabel(entity, label) {
+    var work = entity.kind === 'Project' ? renameProject(entity.id, label)
+      : io.fetchParent(entity).then(function (project) { return renameStation(entity.id, project.id, label); });
+    return work.then(function (saved) { entity.name = label; entity.key = saved.name; });
+  }
+
+  /** The other stations of `project` labelled `label`, ignoring case. */
+  function sameLabel(project, label, selfId) {
+    var wanted = String(label).trim().toLowerCase();
+    return io.fetchChildren(project).then(function (children) {
+      return children.filter(function (c) { return c.kind === 'Station' && c.id !== selfId && c.name.trim().toLowerCase() === wanted; });
+    });
+  }
+
+  /** A new project of `owner` (`{entityType, id}`), labelled `label`. */
+  function createProject(label, owner) {
+    return projectNameFor(owner, label).then(function (name) {
+      var body = { name: name, label: label, type: 'Project' };
+      if (owner.entityType === 'CUSTOMER') { body.customerId = owner; }
+      return post('/api/asset', body);
+    });
   }
 
   /** The owner's groups of `type` (ASSET, DEVICE or DASHBOARD) made public, each with
@@ -443,13 +526,16 @@ root.TerrySenseTbIo = function (ctx) {
       relationType: 'Contains', relationTypeGroup: 'COMMON' });
   }
 
-  /** A new station owned by the project's owner, `Contains`-related from it,
+  /** A new station labelled `label`, owned by the project's owner, `Contains`-related from it,
    * carrying `attrs`, public when the project is, and resolved. */
-  function createStation(name, project, attrs) {
-    return ownerOf(project).then(function (owner) {
-      var body = { name: name, type: 'Station' };
-      if (owner.entityType === 'CUSTOMER') { body.customerId = owner; }
-      return post('/api/asset', body).then(function (created) {
+  function createStation(label, project, attrs) {
+    return getAsset(project.id).then(function (p) {
+      var owner = p.ownerId;
+      return stationNameFor(p.name, label).then(function (name) {
+        var body = { name: name, label: label, type: 'Station' };
+        if (owner.entityType === 'CUSTOMER') { body.customerId = owner; }
+        return post('/api/asset', body);
+      }).then(function (created) {
         var station = assetLevel(created);
         station.ownerId = owner.id;
         return relate(project, station)
@@ -485,10 +571,12 @@ root.TerrySenseTbIo = function (ctx) {
     });
   }
 
-  /** Move the station's `Contains` from one project to another, then resolve it (CONFIG_RESOLVER.md §5). */
+  /** Move the station's `Contains` from one project to another, its name rebuilt
+   * under the new one, then resolve it (CONFIG_RESOLVER.md §5). */
   function moveStation(station, from, to) {
     return relate(to, station).then(function () { return unrelate(from, station); })
-      .then(function () { return resolveStations([station]); });
+      .then(function () { return renameStation(station.id, to.id); })
+      .then(function (saved) { station.key = saved.name; return resolveStations([station]); });
   }
 
   /** Every timeseries key of the entity, deleted with all its data. */
@@ -536,12 +624,12 @@ root.TerrySenseTbIo = function (ctx) {
     return get('/api/device/' + device.id).then(function (d) { return post('/api/device', Object.assign(d, { label: label })); });
   }
 
-  /** The assets that `Contains` the device, `{entityType, id, name}`. */
+  /** The assets that `Contains` the device, as `assetLevel`s. */
   function deviceParents(device) {
     return get('/api/relations/info', { toId: device.id, toType: 'DEVICE' }).then(function (rels) {
-      return (rels || []).filter(function (r) { return r.type === 'Contains' && r.from.entityType === 'ASSET'; })
-        .map(function (r) { return { entityType: 'ASSET', id: r.from.id, name: r.fromName }; });
-    });
+      return Promise.all((rels || []).filter(function (r) { return r.type === 'Contains' && r.from.entityType === 'ASSET'; })
+        .map(function (r) { return getAsset(r.from.id).then(assetLevel).catch(function () { return null; }); }));
+    }).then(function (parents) { return parents.filter(Boolean); });
   }
 
   /** Give the device to `owner` (TA-6): its entries leave every station map and
@@ -659,8 +747,8 @@ root.TerrySenseTbIo = function (ctx) {
     channelFreshness: channelFreshness,
     isComplexDevice: isComplexDevice,
     ancestors: ancestors, openDashboard: openDashboard, openProject: openProject, openStation: openStation, readableDashboard: readableDashboard, isPublicView: isPublicView,
-    publicLink: publicLink, ownerOf: ownerOf, renameEntity: renameEntity, publicMembers: publicMembers, setPublic: setPublic, namedGroup: namedGroup,
-    relate: relate, unrelate: unrelate, createStation: createStation, ownerProjects: ownerProjects,
+    publicLink: publicLink, ownerOf: ownerOf, relabel: relabel, sameLabel: sameLabel, publicMembers: publicMembers, setPublic: setPublic, namedGroup: namedGroup,
+    relate: relate, unrelate: unrelate, createStation: createStation, createProject: createProject, ownerProjects: ownerProjects,
     settingChanges: settingChanges, moveStation: moveStation, deleteHistory: deleteHistory, deleteEntity: deleteEntity,
     serviceOf: serviceOf, setServiceState: setServiceState, silence: silence, endSilence: endSilence,
     ackAlarm: ackAlarm, clearAlarm: clearAlarm, containedDevices: containedDevices, relateToMap: relateToMap, deviceStations: deviceStations,

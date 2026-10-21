@@ -453,11 +453,9 @@ function openNew() {
   go.disabled = true;
   input.addEventListener('input', function () { go.disabled = !input.value.trim(); });
   go.addEventListener('click', function () {
-    var body = { name: input.value.trim(), type: 'Project' };
     var customer = tenant ? owner.value : state.me.customerId.id;
-    if (customer) { body.customerId = { entityType: 'CUSTOMER', id: customer }; }
     go.disabled = true;
-    tb.post('/api/asset', body).then(function (created) {
+    tb.createProject(input.value.trim(), customer ? { entityType: 'CUSTOMER', id: customer } : { entityType: 'TENANT', id: state.me.tenantId.id }).then(function (created) {
       ui.closeDrawer();
       tb.openDashboard(opts.projectDashboardId, 'project', tb.assetLevel(created), { editMap: true });
     }).catch(function (err) {

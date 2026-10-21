@@ -388,7 +388,7 @@ root.TerrySenseTemplates = function (ui, tb) {
   }
 
   /** Paints `colors` on a project dashboard: each station's map marker, and its lines on every chart through its own alias,
-   * a line named after its alias named by `${entityName}`. A station's further channels on one chart: dashed on a line chart, lighter on bars. */
+   * a line named after its alias named by `${entityLabel}`. A station's further channels on one chart: dashed on a line chart, lighter on bars. */
   function paintStations(conf, colors) {
     var m = mapMarker(conf);
     if (m) {
@@ -403,7 +403,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         var color = colors[of[ds.entityAliasId]], named = conf.entityAliases[ds.entityAliasId].alias + ' · ';
         if (!color) { return; }
         ds.dataKeys.forEach(function (k, j) {
-          if (k.label && k.label.indexOf(named) === 0) { k.label = '${entityName} · ' + k.label.slice(named.length); }
+          if (k.label && k.label.indexOf(named) === 0) { k.label = '${entityLabel} · ' + k.label.slice(named.length); }
           if (w.typeFullFqn !== LINE_FQN) { k.color = j ? lighter(color) : color; return; }
           k.color = color;
           k.settings = k.settings || {};
@@ -484,7 +484,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     return { title: own, channels: [key], chart: cat.by[key].chart, together: true, stations: ids };
   }
 
-  /** The chart `ch` from its model: a line per station and channel, labelled by `${entityName}` when several share it;
+  /** The chart `ch` from its model: a line per station and channel, labelled by `${entityLabel}` when several share it;
    * a second unit on a right-hand axis; alarm bands only with a single station, whose limits they are. */
   function chartWidget(models, cat, ch, stations, aliasOf, title) {
     var modelId = models.ids[ch.chart], model = models.dashboard.configuration.widgets[modelId];
@@ -507,7 +507,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       return { type: 'entity', name: '', entityAliasId: aliasOf(st.id),
         dataKeys: mine.map(function (x) {
           var key = fill(mds.dataKeys[0], x.c);
-          key.label = (multi ? '${entityName} · ' : '') + (x.c.bound || x.c.label);
+          key.label = (multi ? '${entityLabel} · ' : '') + (x.c.bound || x.c.label);
           if (units.length > 1) { key.settings = Object.assign(key.settings || {}, { yAxisId: axis(x.c.key) }); }
           return key;
         }),
@@ -643,7 +643,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         var w = conf.widgets[id], all = w.config.datasources;
         // A chart that gains a second station names each line by its station and leaves the alarm bands out.
         if (all.length === 1) {
-          all[0].dataKeys.forEach(function (k) { k.label = '${entityName} · ' + k.label; });
+          all[0].dataKeys.forEach(function (k) { k.label = '${entityLabel} · ' + k.label; });
           all[0].latestDataKeys = [];
           if (w.config.settings.thresholds) { w.config.settings.thresholds = []; }
         }
@@ -651,7 +651,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         all.forEach(function (d) { d.dataKeys.forEach(function (k) { if (cat.by[k.name] && !keys.some(function (x) { return x.name === k.name; })) { keys.push(k); } }); });
         all.push({ type: 'entity', name: '', entityAliasId: alias, latestDataKeys: [], dataKeys: keys.map(function (k) {
           var key = JSON.parse(JSON.stringify(k));
-          key.label = '${entityName} · ' + cat.by[k.name].at[st.id].label;
+          key.label = '${entityLabel} · ' + cat.by[k.name].at[st.id].label;
           return key;
         }) });
       });
@@ -1154,13 +1154,14 @@ root.TerrySenseTemplates = function (ui, tb) {
       function stationsOf(t) {
         return tb.post('/api/entitiesQuery/find', {
           entityFilter: { type: 'assetType', assetTypes: ['Station'], assetNameFilter: '' },
-          entityFields: [{ type: 'ENTITY_FIELD', key: 'name' }],
+          entityFields: [{ type: 'ENTITY_FIELD', key: 'name' }, { type: 'ENTITY_FIELD', key: 'label' }],
           keyFilters: [{ key: { type: 'SERVER_ATTRIBUTE', key: 'config.stationDashboard' }, valueType: 'STRING',
             predicate: { type: 'STRING', operation: 'EQUAL', value: { defaultValue: t.id }, ignoreCase: false } }],
-          pageLink: { page: 0, pageSize: 1000, sortOrder: { key: { type: 'ENTITY_FIELD', key: 'name' }, direction: 'ASC' } }
+          pageLink: { page: 0, pageSize: 1000, sortOrder: { key: { type: 'ENTITY_FIELD', key: 'label' }, direction: 'ASC' } }
         }).then(function (page) {
           return ((page && page.data) || []).map(function (e) {
-            return { entityType: 'ASSET', id: e.entityId.id, name: ((e.latest.ENTITY_FIELD || {}).name || {}).value || e.entityId.id };
+            var f = e.latest.ENTITY_FIELD || {};
+            return { entityType: 'ASSET', id: e.entityId.id, name: (f.label || {}).value || (f.name || {}).value || e.entityId.id };
           });
         });
       }

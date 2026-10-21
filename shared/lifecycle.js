@@ -26,13 +26,24 @@ root.TerrySenseLifecycle = function (ui, tb) {
 
   function names(list) { return list.map(function (e) { return '<b>' + esc(e.name) + '</b>'; }).join(', '); }
 
-  /** Rename `entity` in place, in `target`; `done(name)` after the save. */
-  function rename(entity, target, done) {
+  /** Rename `entity` in place, in `target`; `done(name)` after the save. A
+   * station label another station of `project` carries is saved with a warning. */
+  function rename(entity, target, done, project) {
     ui.inlineEdit(target, entity.name, function (name) {
-      return tb.renameEntity(entity, name).then(function () {
-        ui.toast(t('lifecycle.renamed', 'Renamed to {name}', { name: name }));
+      return tb.relabel(entity, name).then(function () {
+        return project ? tb.sameLabel(project, name, entity.id) : [];
+      }).then(function (twins) {
+        ui.toast(twins.length ? t('lifecycle.renamedTwin', 'Renamed to {name}; another station of this project has the same name', { name: name })
+          : t('lifecycle.renamed', 'Renamed to {name}', { name: name }));
         done(name);
       });
+    });
+  }
+
+  /** The toast after a station is created, warning when another station of `project` carries its label. */
+  function stationAdded(project, station, text) {
+    return tb.sameLabel(project, station.name, station.id).then(function (twins) {
+      ui.toast(twins.length ? text + ' ' + t('lifecycle.twin', 'Another station of this project has the same name.') : text);
     });
   }
 
@@ -189,7 +200,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
   function stationItems(s) {
     var retired = tb.serviceOf(s.attrs).retired;
     return [
-      { a: 'rename', label: t('common.rename', 'Rename'), run: function () { rename(s.station, s.nameEl, s.changed); } },
+      { a: 'rename', label: t('common.rename', 'Rename'), run: function () { rename(s.station, s.nameEl, s.changed, s.project); } },
       s.project && { a: 'move', label: t('lifecycle.move.title', 'Move to project…'), run: function () { moveStation(s.station, s.attrs, s.project, s.owner, s.changed); } },
       { a: s.isPublic ? 'private' : 'public', label: s.isPublic ? t('lifecycle.public.makePrivate', 'Make private') : t('lifecycle.public.makePublic', 'Make public'),
         run: function () { setPublic(s.station, s.owner, !s.isPublic, s.changed, s.projectPublic, s.onHome); } },
@@ -294,7 +305,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
   }
 
   return {
-    rename: rename, moveStation: moveStation, setPublic: setPublic, retire: retire, reactivate: reactivate,
+    rename: rename, stationAdded: stationAdded, moveStation: moveStation, setPublic: setPublic, retire: retire, reactivate: reactivate,
     remove: remove, silenceMenu: silenceMenu, endSilence: endSilence, stationItems: stationItems, changeList: changeList,
     outOfService: outOfService, backInService: backInService, reassign: reassign, deviceChips: deviceChips, serviceItem: serviceItem
   };

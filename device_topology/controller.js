@@ -642,7 +642,9 @@ function save(station, entries, chosen, create) {
     }).then(function () {
       return tb.resolveStations([station]);
     }).then(function () {
-      ui.toast(create ? t('device.stationCreated', 'Station created, device connected') : t('common.saved', 'Saved'));
+      if (create) { return life.stationAdded(create.parent, station, t('device.stationCreated', 'Station created, device connected')); }
+      ui.toast(t('common.saved', 'Saved'));
+    }).then(function () {
       ui.closeDrawer();
       return refresh();
     }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
