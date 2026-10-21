@@ -287,7 +287,7 @@ root.TerrySenseUi = function (rootEl) {
         if (opts.allowKind && !opts.allowKind(spec)) { return; }
         if (entry.aboutHardware && !showDiag && !q) { return; }
         if (onlyInUse && !q && inUse.indexOf(n) < 0) { return; }
-        var kindLabel = spec ? t.kind(camel, spec.label) : (camel || t('common.unknownKind', 'Unknown kind'));
+        var kindLabel = spec ? t.kind(camel, spec.label) : (camel || t('common.unknownKind', 'Unknown measurement kind'));
         var hay = (n + ' ' + text.label + ' ' + text.description + ' ' + kindLabel).toLowerCase();
         if (q && hay.indexOf(q) < 0) { return; }
         (groups[camel] = groups[camel] || { label: kindLabel, names: [] }).names.push(n);
