@@ -269,7 +269,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       var tenant = me.authority === 'TENANT_ADMIN', choose = tenant && o.owner && o.owner.entityType === 'CUSTOMER';
       var note = form.appendChild(h('<div class="ts-row-meta"></div>'));
       note.textContent = root.TerrySenseT('templates.create.opensAfter', 'The template opens in ThingsBoard afterwards, to arrange as you like.') +
-        (choose ? ' ' : tenant ? ' ' + root.TerrySenseT('templates.create.savedTenant', 'It is saved with the in-terra templates, shared with every customer.')
+        (choose ? ' ' : tenant ? ' ' + root.TerrySenseT('templates.create.savedTenant', 'It is saved with the in-Terra templates, shared with every customer.')
           : ' ' + root.TerrySenseT('templates.create.savedOwn', 'Only your organisation sees it.'));
       var where = null;
       if (choose) {
@@ -277,7 +277,7 @@ root.TerrySenseTemplates = function (ui, tb) {
         where = h('<div class="ts-field ts-tpl-group"><label class="ts-switch"><input type="radio" name="ts-tpl-group" value="owner" checked>' +
           ' <span></span></label><label class="ts-switch"><input type="radio" name="ts-tpl-group" value="tenant">' +
           ' <span></span></label></div>');
-        where.querySelectorAll('span')[1].textContent = root.TerrySenseT('templates.create.groupTenant', 'With the in-terra templates, shared with every customer');
+        where.querySelectorAll('span')[1].textContent = root.TerrySenseT('templates.create.groupTenant', 'With the in-Terra templates, shared with every customer');
         form.appendChild(ui.tenantSection(where));
         tb.get('/api/customer/' + o.owner.id).then(function (c) {
           where.querySelector('span').textContent = root.TerrySenseT('templates.create.groupOwner', 'With the templates of {owner}, which only it sees', { owner: c.title || c.name });
