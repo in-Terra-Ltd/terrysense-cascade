@@ -1834,7 +1834,7 @@ function busGroups(banners) {
   busMoves(nodes, srcs).forEach(function (m) { banners.appendChild(moveBanner(m)); });
   // A complete TOPOLOGY report leaves out a removed position (TRX_NANO.md §1.3); before any, absence says nothing.
   var reported = state.client['topology.frame'] !== undefined, removed = [], former = [];
-  out.push(positionGroup(0, nodes[0] || logrNode(), srcs));
+  out.push(positionGroup(0, nodes[0], srcs));
   Object.keys(positions).map(Number).sort(function (a, b) { return a - b; }).forEach(function (pos) {
     if (nodes[pos] || !reported) { out.push(positionGroup(pos, nodes[pos], srcs)); return; }
     var own = srcs.filter(function (s) { return s.position === pos; });
@@ -1846,10 +1846,6 @@ function busGroups(banners) {
 }
 
 /** Position 0 as its catalog entry, `logr-3` or `logr-4` by device type: the TOPOLOGY report lists the external positions only. */
-function logrNode() {
-  return { position: 0, type: String(state.device.type).replace(/^logr(\d)$/, 'logr-$1') };
-}
-
 function positionGroup(pos, node, srcs, removed) {
   var here = srcs.filter(function (s) { return s.position === pos; }).sort(function (a, b) { return a.sourceKey.localeCompare(b.sourceKey); });
   var earlier = removed ? [] : here.filter(function (s) { return M.fromEarlier(model(), s, node); });

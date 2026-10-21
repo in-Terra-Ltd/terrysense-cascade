@@ -105,7 +105,7 @@ function inherited(key) {
 // resolver.levelDisplay in the reader's language.
 function levelLabel(level) {
   if (level.role === 'customer') { return t('settings.levelCustomer', 'Customer defaults · {name}', { name: level.name }); }
-  if (level.role === 'defaults') { return t('settings.levelDefaults', 'in-terra defaults'); }
+  if (level.role === 'defaults') { return t('settings.levelDefaults', 'in-Terra defaults'); }
   if (level.role === 'deviceDefaults') { return t('settings.levelDeviceDefaults', 'Device defaults · {name}', { name: level.name }); }
   if (level.role === 'device') { return t('settings.levelDevice', 'Device · {name}', { name: level.name }); }
   return kindName(level.kind || 'Asset') + ' · ' + level.name;
@@ -145,7 +145,7 @@ function chLabel(ch) {
 }
 function kindLabel(ch) {
   var spec = kindSpec(ch);
-  return spec.label ? t.kind(channelKind(ch), spec.label) : channelKind(ch) || t('common.unknownKind', 'Unknown kind');
+  return spec.label ? t.kind(channelKind(ch), spec.label) : channelKind(ch) || t('common.unknownKind', 'Unknown measurement kind');
 }
 
 // The unit a channel is stored in, which its thresholds and hysteresis are
@@ -206,7 +206,6 @@ function loadSources() {
     state.devModel = { bus: bus, device: { type: type }, client: got[0] || {}, latest: {}, faults: {},
                        peripherals: peripherals, kinds: state.kinds, names: state.names };
     state.nodes = bus ? M.topology(state.devModel) : {};
-    if (bus && !state.nodes[0]) { state.nodes[0] = { position: 0, type: type.replace(/^logr/, 'logr-') }; }
   });
 }
 
@@ -496,7 +495,7 @@ function render() {
   bodyEl.innerHTML = '';
   renderNotice();
   if (!state.defaultsShared) {
-    bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-terra defaults are not shared with this customer, so tenant defaults and the measurement names do not load. in-Terra shares the “Shared defaults” group.')) + '</span></div>'));
+    bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-Terra defaults are not shared with this customer, so they and the measurement names do not load. in-Terra shares the “Shared defaults” group.')) + '</span></div>'));
   }
 
   var sec = h('<div class="ts-section"><div class="ts-section-head">' + esc(t('settings.measurements', 'Measurements')) + ' ' + info('measurements') + '</div></div>');
@@ -1133,7 +1132,7 @@ function openAdd() {
 
 function openMeasurementPicker(fromAdd) {
   if (state.deviceBranch) { openSourcePicker(fromAdd); return; }
-  var dr = scopedDrawer(esc(t('settings.chooseMeasurement', 'Choose a measurement')), esc(t('settings.groupedByKind', 'Grouped by kind')));
+  var dr = scopedDrawer(esc(t('settings.chooseMeasurement', 'Choose a measurement')), esc(t('settings.groupedByKind', 'Grouped by measurement kind')));
   if (fromAdd) { dr.onBack(openAdd); }
   var own = channelsWith(state.own);
   var measurable = {};
@@ -1150,9 +1149,9 @@ function openMeasurementPicker(fromAdd) {
   var instances = Object.keys(state.channelKinds).filter(function (k) { return resolver.splitChannelKey(k).instance && !isRule(k); })
     .sort(function (a, b) { return a.localeCompare(b, undefined, { numeric: true }); });
   if (instances.length) {
-    dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.oneInstance', 'One instance only')) + '</div>'));
+    dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.oneInstance', 'One channel instance only')) + '</div>'));
     instances.forEach(function (k) {
-      var o = ui.nameOption(k, { label: chLabel(k), description: t('settings.overridesInstance', 'Overrides {name} for this instance', { name: chLabel(resolver.splitChannelKey(k).name) }) },
+      var o = ui.nameOption(k, { label: chLabel(k), description: t('settings.overridesInstance', 'Overrides {name} for this channel instance', { name: chLabel(resolver.splitChannelKey(k).name) }) },
         own[k] ? '<span class="ts-chip">' + esc(t('settings.setHereChip', 'set here')) + '</span>' : '', '');
       o.addEventListener('click', function () { openChannel(k, fromAdd); });
       dr.body.appendChild(o);

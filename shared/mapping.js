@@ -76,6 +76,9 @@ function topology(m) {
     if (!type || type === EMPTY_MARKER) { return; }
     nodes[t[1]] = { position: Number(t[1]), type: type, version: m.client['topology.p' + t[1] + '.version'] };
   });
+  // The TOPOLOGY report never lists position 0: it is the LOGR's own board.
+  var board = /^logr([34])$/.exec(String((m.device || {}).type || ''));
+  if (board && !nodes[0]) { nodes[0] = { position: 0, type: 'logr-' + board[1] }; }
   return nodes;
 }
 
