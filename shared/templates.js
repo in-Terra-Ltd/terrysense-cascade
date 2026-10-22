@@ -26,6 +26,8 @@ root.TerrySenseTemplates = function (ui, tb) {
   var MAP_FQN = 'system.map';
   var PROJECT_VIEW = 'project';
   var TABLE_FQN = 'system.cards.entities_table';
+  // The project view's battery column, kept after the channels (HEALTH.md §3).
+  var BATTERY_STATE = 'devices.batteryState';
   var NAV_FQN = 'tenant.terrysense.navigation';
   var HOME_LINKS = ['projects', 'installation', 'settings', 'deleteHome'];
   var HOME_GROUP = 'Project home dashboards';
@@ -583,7 +585,8 @@ root.TerrySenseTemplates = function (ui, tb) {
         if (w.typeFullFqn === TABLE_FQN) {
           if (!listed.length) { return; }
           var ds = w.config.datasources[0];
-          ds.dataKeys = [ds.dataKeys[0]].concat(listed.map(function (k) { return tableKey(plan.cat.by[k]); }));
+          var battery = ds.dataKeys.filter(function (k) { return k.name === BATTERY_STATE; });
+          ds.dataKeys = [ds.dataKeys[0]].concat(listed.map(function (k) { return tableKey(plan.cat.by[k]); }), battery);
         }
         if (w.typeFullFqn === MAP_FQN) { w.config.title = plan.title; }
         place(w, at.sizeX, at.sizeY, top + at.row, at.col);
