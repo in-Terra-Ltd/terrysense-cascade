@@ -778,6 +778,18 @@ function navRow(parent, label, meta, button, onClick) {
   return row;
 }
 
+/** A button on `row`, before its Installation, to the dashboard `key` names on `entity`, once the user can read it. */
+function linkDashboard(row, entity, key, label, stateId) {
+  tb.attrsMap(entity).then(function (attrs) { return tb.readableDashboard(attrs[key]); }).then(function (id) {
+    if (!id || !row.isConnected) { return; }
+    var b = h('<button type="button" class="ts-btn"></button>');
+    b.textContent = label;
+    b.setAttribute('data-a', key === 'config.stationDashboard' ? 'charts' : 'home');
+    b.addEventListener('click', function () { ui.closeDrawer(); tb.openDashboard(id, stateId, stateId && entity); });
+    row.insertBefore(b, row.querySelector('button'));
+  });
+}
+
 /** Where to go from the pane, by kind: the device, the stations it feeds, their projects. */
 function fillGoTo(go, d) {
   Array.prototype.slice.call(go.children, 1).forEach(function (el) { el.remove(); });
@@ -798,15 +810,19 @@ function fillGoTo(go, d) {
   }
   var stations = group(d.stationRefs.length === 1 ? t('common.station', 'Station') : t('common.stations', 'Stations'));
   d.stationRefs.forEach(function (s) {
-    navRow(stations, s.name, s.project ? t('fleet.inProject', 'in {name}', { name: s.project.name }) : t('fleet.onNoProject', 'on no project'), t('common.installation', 'Installation'),
-      opts.projectDashboardId && function () { tb.openDashboard(opts.projectDashboardId, 'station', s); }).setAttribute('data-station', s.name);
+    var row = navRow(stations, s.name, s.project ? t('fleet.inProject', 'in {name}', { name: s.project.name }) : t('fleet.onNoProject', 'on no project'), t('common.installation', 'Installation'),
+      opts.projectDashboardId && function () { tb.openDashboard(opts.projectDashboardId, 'station', s); });
+    row.setAttribute('data-station', s.name);
+    linkDashboard(row, s, 'config.stationDashboard', t('common.charts', 'Charts'), 'station');
   });
   if (!d.projects.length) { return; }
   var projects = group(d.projects.length === 1 ? t('common.project', 'Project') : t('common.projects', 'Projects'));
   d.projects.forEach(function (p) {
     var n = d.stationRefs.filter(function (s) { return s.project && s.project.id === p.id; }).length;
-    navRow(projects, p.name, n === 1 ? t('fleet.fedOne', '1 station fed') : t('fleet.fedMany', '{n} stations fed', { n: n }), t('common.installation', 'Installation'),
-      opts.projectDashboardId && function () { tb.openDashboard(opts.projectDashboardId, 'project', p); }).setAttribute('data-project', p.name);
+    var row = navRow(projects, p.name, n === 1 ? t('fleet.fedOne', '1 station fed') : t('fleet.fedMany', '{n} stations fed', { n: n }), t('common.installation', 'Installation'),
+      opts.projectDashboardId && function () { tb.openDashboard(opts.projectDashboardId, 'project', p); });
+    row.setAttribute('data-project', p.name);
+    linkDashboard(row, p, 'config.homeDashboard', t('nav.home', 'Project dashboard'));
   });
 }
 
