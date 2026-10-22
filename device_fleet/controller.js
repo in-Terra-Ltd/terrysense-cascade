@@ -2,7 +2,7 @@
  * Fleet — every device at a glance: is it live, where does it feed, what is
  * it, what is wrong with it (TC-3, TC-12). The Devices dashboard's landing view
  * and the tenant's home page. Its header states the verdict ("3 devices need a
- * look"), and *Needs a look* is on when any does. Five columns by default:
+ * look"), and it opens on *All*. Five columns by default:
  * state and age, name, station · project, battery, alarms; the others under
  * *More columns*, remembered per user, and in the row's pane. The project and
  * sensor family tags sit behind one *Filter*, the picked ones as chips beside
@@ -182,7 +182,6 @@ function load() {
         // A customer may own no LOGR: open on the first group that has a device.
         var first = GROUPS.filter(function (g) { return devices.some(function (d) { return groupOf(d).id === g.id; }); })[0];
         if (first) { state.group = first.id; }
-        if (devices.some(function (d) { return groupOf(d).id === state.group && needsLook(d); })) { state.filter = 'attention'; }
       }
       state.devices = devices;
       state.loadedAt = Date.now();
