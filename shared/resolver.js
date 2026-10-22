@@ -139,7 +139,7 @@ function levelDisplay(level) {
   // must agree on these strings, since a UI showing "replaces X from Y" is
   // meaningless if Y reads differently depending on which resolver produced it.
   if (level.role === 'customer') { return 'Customer defaults · ' + level.name; }
-  if (level.role === 'defaults') { return 'in-terra defaults'; }
+  if (level.role === 'defaults') { return 'in-Terra defaults'; }
   if (level.role === 'deviceDefaults') { return 'Device defaults · ' + level.name; }
   if (level.role === 'device') { return 'Device · ' + level.name; }
   return (level.kind || 'Asset') + ' · ' + level.name;

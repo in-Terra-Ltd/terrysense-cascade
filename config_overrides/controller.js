@@ -89,7 +89,7 @@ function nearest(key) {
   return null;
 }
 
-// An alarm text left to the in-terra defaults comes from their catalogue, in
+// An alarm text left to the in-Terra defaults comes from their catalogue, in
 // this level's language (ALARMING.md §4); the resolver does the same.
 function inherited(key) {
   var hit = nearest(key);

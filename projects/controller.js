@@ -95,7 +95,7 @@ function loadStation(station) {
 }
 
 function ownerName(ownerId) {
-  if (!ownerId || ownerId.entityType !== 'CUSTOMER') { return Promise.resolve('in-terra'); }
+  if (!ownerId || ownerId.entityType !== 'CUSTOMER') { return Promise.resolve('in-Terra'); }
   if (!state.owners[ownerId.id]) {
     state.owners[ownerId.id] = tb.get('/api/customer/' + ownerId.id).then(function (c) { return c.title || c.name; })
       .catch(function () { return ''; });
@@ -436,7 +436,7 @@ function openNew() {
   var input = dr.body.querySelector('[data-f=name]');
   var owner = null;
   if (tenant) {
-    owner = h('<select class="ts-select wide" data-f="owner"><option value="">in-terra</option></select>');
+    owner = h('<select class="ts-select wide" data-f="owner"><option value="">in-Terra</option></select>');
     var field = h('<div class="ts-field"><div class="ts-field-label">' + esc(t('common.owner', 'Owner')) + '</div></div>');
     field.appendChild(owner);
     dr.body.appendChild(ui.tenantSection(field));

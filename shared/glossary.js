@@ -15,7 +15,7 @@ var t = root.TerrySenseT;
 // Tables are functions, so each read is in the reader's language.
 function terms() {
   return {
-    cascade: t('glossary.term.cascade', 'Settings flow down: <b>in-terra defaults → Customer → Project → Station</b>, and for a device <b>in-terra defaults → Device defaults → Device</b>. The nearest level that sets a value wins. A value set here applies to every station or device below.'),
+    cascade: t('glossary.term.cascade', 'Settings flow down: <b>in-Terra defaults → Customer → Project → Station</b>, and for a device <b>in-Terra defaults → Device defaults → Device</b>. The nearest level that sets a value wins. A value set here applies to every station or device below.'),
     measurements: t('glossary.term.measurements', 'Alarm thresholds and hysteresis, set per measurement, in the unit it is stored in.'),
     notifications: t('glossary.term.notifications', 'Who receives alarm messages, by SMS and e-mail, and what the messages say. Measurement alarms and device alarms each have their own contacts.'),
     retention: t('glossary.term.retention', 'How long measured data is kept before it is deleted. A change applies to new data only.'),
@@ -46,7 +46,7 @@ function terms() {
     drycRules: t('glossary.term.drycRules', 'The digital I/O module runs these rules itself, first to last. A rule that notifies wakes the logger when it starts and when it ends; the station then raises or clears an alarm, sent to its contacts like any other.'),
     drycRecords: t('glossary.term.drycRecords', 'The digital I/O module holds at most 16 records: one per notifying rule, and one per relay a rule switches.'),
     drycSync: t('glossary.term.drycSync', 'Saving keeps the rules here. Send puts them on the digital I/O module, after the logger’s next uplink.'),
-    register: t('glossary.term.register', 'Facts an older unit (LOGR2) cannot report itself, kept by hand by in-terra or an administrator: hardware version, hardware status, LoRa module firmware, whether a firmware update is possible, and the inactivity timeout. A LOGR3 or LOGR4 reports them itself.'),
+    register: t('glossary.term.register', 'Facts an older unit (LOGR2) cannot report itself, kept by hand by in-Terra or an administrator: hardware version, hardware status, LoRa module firmware, whether a firmware update is possible, and the inactivity timeout. A LOGR3 or LOGR4 reports them itself.'),
     commands: t('glossary.term.commands', 'A command reaches the LOGR after its next uplink (LoRaWAN Class A), so it waits here until the device answers. Changes sent before then join one queued set: a later change to the same source replaces the earlier one, and the device receives only the final state. With no answer after a day, or two uplink intervals when longer, the set is shown as unanswered.'),
     peripheralFault: t('glossary.term.peripheralFault', 'Sources the LOGR reported a failed read for, and that have not sent a value since. The device states the fault; nothing is guessed from missing data.')
   };

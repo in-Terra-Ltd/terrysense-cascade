@@ -1051,7 +1051,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       var tenantAdmin = me.authority === 'TENANT_ADMIN';
       function mayEdit(t) { return o.canCreate && (tenantAdmin || !t.tenant); }
       function whose(t) {
-        return t.tenant ? 'in-terra' : tenantAdmin ? root.TerrySenseT('templates.panel.customer', 'customer') : root.TerrySenseT('templates.panel.own', 'own');
+        return t.tenant ? 'in-Terra' : tenantAdmin ? root.TerrySenseT('templates.panel.customer', 'customer') : root.TerrySenseT('templates.panel.own', 'own');
       }
 
       function assign(t) {
