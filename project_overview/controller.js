@@ -425,7 +425,7 @@ function onMapClick(ev) {
   if (name) { addStation(name, latLng); } else if (entry) { savePosition(entry, latLng); }
 }
 
-/** *Add station* (CA-8): a name, then a click on the map. */
+/** *Add station* (CA-6): a name, then a click on the map. */
 function openAdd() {
   var dr = ui.openDrawer(t('overview.addStation', 'Add station'), esc(state.entity.name));
   var f = dr.body.appendChild(h('<div class="ts-field"><div class="ts-field-label">' + esc(t('common.name', 'Name')) + '</div><input class="ts-input wide" data-f="name">' +
@@ -450,7 +450,7 @@ function addStation(name, latLng) {
   }).catch(function (err) { ui.toast(t('overview.addFailed', 'Station not added: {error}', { error: errText(err) }), 'error'); });
 }
 
-/** *Use device position* (CA-9): a ghost marker at the fix; a click on it writes the position. */
+/** *Use device position* (CA-6): a ghost marker at the fix; a click on it writes the position. */
 function showGhost(entry) {
   var L = window.L, f = entry.fix;
   clearGhost();

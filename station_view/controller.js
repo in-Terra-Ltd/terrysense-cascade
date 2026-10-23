@@ -349,7 +349,7 @@ function leave() {
   tb.openDashboard(opts.projectDashboardId, p ? 'project' : null, p);
 }
 
-/** *Acknowledge* and *Clear* (CA-22) on an active alarm, for a writer. */
+/** *Acknowledge* and *Clear* on an active alarm, for a writer. */
 function alarmActions(a) {
   var el = h('<span class="ts-stv-alarm-acts"></span>');
   el.setAttribute('data-alarm', a.type);
@@ -955,7 +955,7 @@ function renderRules() {
   });
 }
 
-// -- connect a device (CA-8) ------------------------------------------------------------
+// -- connect a device (CA-6) ------------------------------------------------------------
 
 /** The owner's devices, those that measure what the station's dashboard shows
  * first. Picking one opens its device view on the connect panel, this station picked. */

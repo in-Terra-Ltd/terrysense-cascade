@@ -712,7 +712,7 @@ root.TerrySenseTbIo = function (ctx) {
     }).then(function (parents) { return parents.filter(Boolean); });
   }
 
-  /** Give the device to `owner` (TA-6): its entries leave every station map and
+  /** Give the device to `owner` (TA-1): its entries leave every station map and
    * its `Contains` relations go, the stations resolve, and only then does the
    * owner change, so it never feeds a station of its previous owner
    * (device_ownership.py). Returns the stations whose map changed. */

@@ -166,7 +166,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
     }).catch(fail(t('lifecycle.reactivate.failed', 'Not reactivated: {error}')));
   }
 
-  /** *Delete* (CA-18): `target`, after the retired `stations` going with it,
+  /** *Delete* (CA-17): `target`, after the retired `stations` going with it,
    * confirmed by typing its name; their history only when ticked. */
   function remove(target, stations, done) {
     var html = target.kind === 'Project'
@@ -273,7 +273,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
     }).catch(fail(t('common.notChanged', 'Not changed: {error}')));
   }
 
-  /** *Reassign…* (TA-6): the new owner, then a confirmation naming the stations
+  /** *Reassign…* (TA-1): the new owner, then a confirmation naming the stations
    * the device leaves; one save disconnects it and changes its owner. */
   function reassign(device, done) {
     var dr = ui.openDrawer(esc(t('lifecycle.reassign.title', 'Reassign…')), esc(deviceName(device)));

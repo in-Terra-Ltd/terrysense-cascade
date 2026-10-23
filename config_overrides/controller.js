@@ -7,8 +7,8 @@
  * its sources named as vocabulary.md §7 says.
  * Every save re-resolves the stations or devices it reaches (CONFIG_RESOLVER.md §5).
  * A customer, and the DEFAULTS asset for the tenant, also show the owner's
- * address book (CA-20); a customer or project row a lower level replaces
- * carries a badge (CA-21).
+ * address book; a customer or project row a lower level replaces
+ * carries a badge.
  *
  * Loads after shared/resolver.js, mapping.js, glossary.js, ui.js, tb_io.js and calculations.js; styles are
  * shared/theme.css. Design: logr-product-docs/cloud/CASCADE_EDITOR.md.
@@ -70,7 +70,7 @@ var state = {
   devModel: null, nodes: {}, src: {}, feeds: {},
   // book: the owner's address book — `holder` the CUSTOMER or the tenant's
   // ContactBook asset, `usage` {entryId: [{level, attrs, key}]} where a section shows it.
-  // below: the levels under a customer or project with their attributes, for CA-21.
+  // below: the levels under a customer or project with their attributes, for the set-lower-down badge.
   book: { holder: null, entries: {}, usage: null, section: false }, below: null
 };
 // Entries created by *New contact* in the open notifications panel, written with it.
@@ -376,7 +376,7 @@ function ownedLevels(o) {
   });
 }
 
-/** The levels below a customer or project (CA-21), and where each book entry is used (CA-20). */
+/** The levels below a customer or project, and where each book entry is used. */
 function loadBelow() {
   var o = state.origin, badges = o.entityType === 'CUSTOMER' || o.kind === 'Project';
   state.below = null;
@@ -611,7 +611,7 @@ function render() {
   if (state.book.section) { renderBook(); }
 }
 
-// -- set lower down (CA-21) ---------------------------------------------------------------
+// -- set lower down ---------------------------------------------------------------
 
 // A station key replaces a key of the same field for its channel name, or for
 // one instance of it (`channel.tiltX-3.…` under `channel.tiltX.…`).
@@ -716,7 +716,7 @@ function resetLower(list) {
     .catch(failed);
 }
 
-// -- address book (CA-20) ---------------------------------------------------------------------
+// -- address book ---------------------------------------------------------------------
 
 function entryName(e) { return (e && (e.name || e.sms || e.email)) || t('settings.unknownEntry', 'Unknown entry'); }
 function useText(u) {
@@ -753,7 +753,7 @@ function renderBook() {
   renderUsers();
 }
 
-/** The platform users a list or a report names, each replaced or removed everywhere in one action (CA-20). */
+/** The platform users a list or a report names, each replaced or removed everywhere in one action. */
 function renderUsers() {
   var usage = state.book.userUsage || {}, ids = Object.keys(usage);
   if (!ids.length) { return; }

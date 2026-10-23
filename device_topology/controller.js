@@ -1,9 +1,9 @@
 /*
  * Device — one device of any type: is it live, what it measures and which
- * station channel each measurement feeds (TC-1 to TC-7); for a user who may
+ * station channel each measurement feeds (TC-1, TC-2, TC-3, TC-6); for a user who may
  * write it, connecting it to a station, a new one included, and choosing the
  * channels (CA-1), per station or per measurement, and on a LOGR3 or LOGR4 the commands that reconfigure it
- * (CA-4, TC-8/9). Read-only for anyone else.
+ * (CA-4). Read-only for anyone else.
  *
  * In its header, for the same user, *Silence* (CA-19) and the device's row
  * menu: *Replace device…* (CA-13), *Out of service…* or *Back in service*
@@ -264,7 +264,7 @@ var logr2Parts = M.logr2Parts;
 function mappedNames() { return M.mappedNames(state.device.id.id, state.bindings.map(function (b) { return b.entries; })); }
 function mappable() { return M.mappable(model(), mappedNames()); }
 
-// -- commands (CA-4, TC-8/9) ---------------------------------------------------------------
+// -- commands (CA-4) ---------------------------------------------------------------
 
 function parseValue(raw) { return typeof raw === 'string' ? parseJson(raw) : raw; }
 
@@ -1084,7 +1084,7 @@ function followUpCard() {
   return card;
 }
 
-// -- bus moves (CA-14) --------------------------------------------------------------------------
+// -- bus moves (CA-13) --------------------------------------------------------------------------
 
 /** Positions whose wired sources went silent while another position, feeding
  * no station, reports the same peripheral type — by its topology type when
@@ -1550,7 +1550,7 @@ function sdTile() {
     t('device.sdOf', 'of {total} GiB', { total: c['status.sdTotalGib'] }));
 }
 
-// -- measurements (TC-1, TC-2, TC-4, TC-5) -------------------------------------------------
+// -- measurements (TC-1, TC-2, TC-12) -------------------------------------------------
 
 /** Every measurement row of the last render, `{el, attention, unstored}`, for the counts and the filter. */
 var lastRows = [];
@@ -2186,7 +2186,7 @@ function partGroup(part, logr2, address) {
   return g;
 }
 
-// -- subscriptions: the edit mode (CA-4, TC-8/9) ------------------------------------------------
+// -- subscriptions: the edit mode (CA-4) ------------------------------------------------
 
 /** Whether the device's SUBSCRIPTIONS report names the source; a source known from its readings alone has none to switch. */
 function subscribed(s) { return s.enabled !== undefined || s.interval !== undefined; }
@@ -2814,7 +2814,7 @@ function uplinkControl(current) {
   return el;
 }
 
-/** TC-6, TC-7: the raw values behind the summary lines, closed, each tagged with where it
+/** TC-6: the raw values behind the summary lines, closed, each tagged with where it
  * comes from: the LOGR's own STATUS / SUBSCRIPTIONS reports, or the network
  * server (TRX_NANO_COMPLIANCE.md §3). The cloud computes none of it. */
 function detailsPart() {

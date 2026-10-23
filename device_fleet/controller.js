@@ -9,7 +9,7 @@
  * it; the fleet's active alarms in a closed section that counts them, each
  * acknowledged or cleared there by a writer. A row opens a pane summing the device up; its
  * actions, for a user who may write the device, put it out of service (CA-23),
- * and under *Tenant only* reassign it to another owner (TA-6). A device out of
+ * and under *Tenant only* reassign it to another owner (TA-1). A device out of
  * service leaves *Needs a look* for its own *Out of service* filter. *Outdated firmware*
  * keeps the LOGRs whose logger or DRYC firmware, as the device reports it, is older
  * than the newest release of the firmware index for its board revision (TC-15).
@@ -632,7 +632,7 @@ function deviceRef(d) { return { entityType: 'DEVICE', id: d.id, name: d.name, l
 function errText(e) { return (e && e.error && e.error.message) || (e && e.message) || String(e); }
 
 /** The fleet's active alarms (TC-12), closed, its header counting them and naming the worst: each its severity,
- * type, device and age, the device opening its pane; *Acknowledge* and *Clear* for a writer (CA-22). */
+ * type, device and age, the device opening its pane; *Acknowledge* and *Clear* for a writer. */
 function renderAlarms() {
   var all = [];
   state.devices.forEach(function (d) { d.alarms.forEach(function (a) { all.push({ a: a, d: d }); }); });
