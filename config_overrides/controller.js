@@ -692,7 +692,7 @@ function stationsNaming(ids) {
     if (hd.entityType === 'CUSTOMER') { levels = [hd].concat(levels); }
     return Promise.all(levels.map(function (l) { return io.fetchAttrs(l).then(function (a) { return { level: l, attrs: a || {} }; }); }));
   }).then(function (holders) {
-    var usage = bookUsage(holders), levels = [];
+    var usage = bookUsage(holders, 'book'), levels = [];
     ids.forEach(function (id) { (usage[id] || []).forEach(function (u) { levels.push(u.level); }); });
     return uniqueStations(levels);
   });
