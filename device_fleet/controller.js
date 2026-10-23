@@ -10,7 +10,9 @@
  * acknowledged or cleared there by a writer. A row opens a pane summing the device up; its
  * actions, for a user who may write the device, put it out of service (CA-23),
  * and under *Tenant only* reassign it to another owner (TA-6). A device out of
- * service leaves *Needs a look* for its own *Out of service* filter.
+ * service leaves *Needs a look* for its own *Out of service* filter. *Outdated firmware*
+ * keeps the LOGRs whose logger or DRYC firmware, as the device reports it, is older
+ * than the newest release of the firmware index for its board revision (TC-15).
  *
  * One entity query brings every device of the configured profiles with its
  * activity, versions and register (ATTRIBUTES.md §3); one alarm query counts
@@ -48,7 +50,7 @@ var GROUPS = [
 ];
 var ATTRS = ['active', 'lastActivityTime', 'inactivityTimeout', 'deviceInfo.hwVersion', 'deviceInfo.fwVersion',
   'status.healthFaults', 'status.soc', 'register.hwVersion', 'register.hwStatus', 'register.loraFw', 'register.dfu',
-  'service.state', 'service.silencedUntil'];
+  'service.state', 'service.silencedUntil', 'deviceInfo.drycFwVersion'];
 // The battery when no STATUS report carries a charge: a LOGR4's own percent, else the voltage of either generation.
 var BATTERY_SERIES = ['p0.percent', 'p0.voltage', 'logr.batteryVoltage'];
 var FINE_STATUS = /^(all functional|ok|)$/i;
@@ -75,7 +77,7 @@ function flag(v) { return v === true || v === 'true'; }
 
 // -- data -------------------------------------------------------------------------------
 
-var state = { devices: [], tenant: false, writable: false, group: 'logr', filter: 'all', search: '', tags: { sensor: {}, project: {} }, tagsOpen: {}, sort: 'uplink', dir: -1, loadedAt: 0 };
+var state = { devices: [], index: { boards: {} }, tenant: false, writable: false, group: 'logr', filter: 'all', search: '', tags: { sensor: {}, project: {} }, tagsOpen: {}, sort: 'uplink', dir: -1, loadedAt: 0 };
 var memo = window.TerrySenseDisclosure('fleet');
 
 function queryDevices() {
@@ -149,9 +151,12 @@ function sensorsOf(d) {
     });
   }
   return tb.attrsMap({ entityType: 'DEVICE', id: d.id }, 'CLIENT_SCOPE').then(function (attrs) {
+    d.drycs = [];
     Object.keys(attrs).forEach(function (k) {
       var m = TOPOLOGY_TYPE_RE.exec(k), type = m && String(attrs[k] || '').trim();
       if (m && m[1] !== '0' && type && type !== EMPTY_MARKER) { add(type.split('-')[0].toUpperCase(), type); }
+      var fw = m && attrs['peripheralInfo.p' + m[1] + '.fwVersion'];
+      if (/^dryc/.test(type) && fw) { d.drycs.push({ position: Number(m[1]), fw: String(fw) }); }
     });
     return sorted(byCode);
   });
@@ -162,6 +167,14 @@ function loadSensors(devices) {
   return Promise.all(devices.filter(function (d) { return groupOf(d).id === 'logr'; }).map(function (d) {
     return sensorsOf(d).then(function (s) { d.sensors = s; }).catch(function () { d.sensors = []; });
   }));
+}
+
+/** The firmware index, for *Outdated firmware*; none read is an empty one. */
+function loadIndex() {
+  return window.TerrySenseFirmwareIndex.load().catch(function () { return { boards: {} }; }).then(function (index) {
+    state.index = index;
+    render();
+  });
 }
 
 /** Devices and alarms first; the stations and sensors, one lookup each per
@@ -177,6 +190,7 @@ function load() {
         d.stationRefs = old ? old.stationRefs : null;
         d.projects = old ? old.projects : null;
         d.sensors = old ? old.sensors : null;
+        d.drycs = old ? old.drycs : null;
       });
       if (!state.loadedAt) {
         // A customer may own no LOGR: open on the first group that has a device.
@@ -186,7 +200,7 @@ function load() {
       state.devices = devices;
       state.loadedAt = Date.now();
       render();
-      return Promise.all([loadStations(devices), loadSensors(devices)]);
+      return Promise.all([loadStations(devices), loadSensors(devices).then(render), loadIndex()]);
     });
   });
 }
@@ -213,6 +227,26 @@ function version(d, reported, register) {
   if (d.attrs[reported]) { return { value: d.attrs[reported], from: 'reported' }; }
   if (register && !reports(d) && d.attrs[register]) { return { value: d.attrs[register], from: 'register' }; }
   return null;
+}
+
+/** `[{ what, fw, version }]`: the logger, then each DRYC, whose reported firmware is older than
+ * the release to take from the index; a LOGR2 reports no logger firmware, its DRYC's only. */
+function outdated(d) {
+  var FI = window.TerrySenseFirmwareIndex, out = [];
+  if (groupOf(d).id !== 'logr') { return out; }
+  var fw = d.attrs['deviceInfo.fwVersion'], up = reports(d) && FI.updateFor(state.index, d.attrs['deviceInfo.hwVersion'], fw);
+  if (up) { out.push({ what: t('fleet.logger', 'Logger'), fw: fw, version: up.version }); }
+  var drycs = reports(d) ? d.drycs || [] : d.attrs['deviceInfo.drycFwVersion'] ? [{ position: null, fw: d.attrs['deviceInfo.drycFwVersion'] }] : [];
+  drycs.forEach(function (x) {
+    var u = FI.drycUpdateFor(state.index, x.fw);
+    if (u) { out.push({ what: 'DRYC' + (x.position ? ' p' + x.position : ''), fw: x.fw, version: u.version }); }
+  });
+  return out;
+}
+function outdatedText(d) {
+  return outdated(d).map(function (o) {
+    return o.what + ' ' + o.fw + ' → ' + (o.version || t('fleet.newer', 'newer'));
+  }).join(', ');
 }
 
 function healthFaults(d) {
@@ -315,6 +349,7 @@ function visible() {
     if (groupOf(d).id !== state.group) { return false; }
     if (state.filter === 'attention' && !needsLook(d)) { return false; }
     if (state.filter === 'outofservice' && !outOfService(d)) { return false; }
+    if (state.filter === 'outdated' && !outdated(d).length) { return false; }
     if (!hasTags(d)) { return false; }
     if (!q) { return true; }
     return [d.name, d.label, d.owner, d.type, hwStatus(d)].concat(d.stations || [], codes(d), (d.projects || []).map(function (p) { return p.name; }))
@@ -339,7 +374,8 @@ var cardEl = h(
   '    <div class="ts-seg" data-bar="group"></div>' +
   '    <div class="ts-seg" data-bar="filter"><button type="button" data-v="all">' + esc(t('common.all', 'All')) + '</button>' +
   '      <button type="button" data-v="attention">' + esc(t('fleet.needsLook', 'Needs a look')) + '</button>' +
-  '      <button type="button" data-v="outofservice">' + esc(t('common.outOfService', 'Out of service')) + '</button></div>' +
+  '      <button type="button" data-v="outofservice">' + esc(t('common.outOfService', 'Out of service')) + '</button>' +
+  '      <button type="button" data-v="outdated">' + esc(t('fleet.outdated', 'Outdated firmware')) + '</button></div>' +
   '    <label class="ts-fleet-search">' + ICON.search + '<input type="search" placeholder="' + esc(t('fleet.search', 'Name, label, customer, project, station, sensor')) + '"></label>' +
   '    <button type="button" class="ts-btn sm ts-fleet-filterbtn" data-a="filter">' + esc(t('fleet.filter', 'Filter')) + '</button><span class="ts-fleet-active"></span>' +
   '    <span class="ts-spacer"></span><button type="button" class="ts-btn sm ts-fleet-colsbtn" data-a="columns">' + esc(t('fleet.moreColumns', 'More columns')) + '</button>' +
@@ -448,6 +484,9 @@ function openDevice(d) {
 // -- render -----------------------------------------------------------------------------
 
 function render() {
+  var outdatedBtn = cardEl.querySelector('[data-bar=filter] [data-v=outdated]');
+  outdatedBtn.hidden = state.group !== 'logr';
+  if (outdatedBtn.hidden && state.filter === 'outdated') { state.filter = 'all'; }
   cardEl.querySelectorAll('.ts-seg button').forEach(function (b) {
     b.classList.toggle('on', state[b.parentNode.getAttribute('data-bar')] === b.getAttribute('data-v'));
   });
@@ -511,6 +550,11 @@ function row(d, logr) {
   el.querySelector('small').textContent = d.label || '';
   var dev = el.querySelector('.ts-fleet-dev');
   life.deviceChips(d.attrs).forEach(function (c) { dev.appendChild(c); });
+  if (outdated(d).length) {
+    var old = dev.appendChild(h('<span class="ts-chip accent" data-chip="outdated"></span>'));
+    old.textContent = t('fleet.outdatedChip', 'Outdated');
+    old.title = outdatedText(d);
+  }
   if (outOfService(d)) { el.setAttribute('data-service', tb.serviceOf(d.attrs).state); }
   var cust = el.querySelector('.ts-fleet-cust');
   if (cust) { cust.textContent = d.customer || t('fleet.noCustomer', 'none'); cust.classList.toggle('none', !d.customer); }
@@ -857,6 +901,7 @@ function openPane(d) {
     var hw = version(d, 'deviceInfo.hwVersion', 'register.hwVersion'), fw = version(d, 'deviceInfo.fwVersion', null);
     kv(facts, t('common.versions', 'Versions'), [hw ? (hw.from === 'register' ? t('fleet.hwKeptByHand', 'hw {version} (kept by hand)', { version: hw.value }) : 'hw ' + hw.value) : '', fw ? 'fw ' + fw.value : '',
       !reports(d) && d.attrs['register.loraFw'] ? 'LoRa ' + d.attrs['register.loraFw'] : ''].filter(Boolean).join(' · ') || t('fleet.notReported', 'not reported'));
+    if (outdated(d).length) { kv(facts, t('fleet.outdated', 'Outdated firmware'), outdatedText(d)).setAttribute('data-kv', 'outdated'); }
   } else {
     kv(facts, t('fleet.type', 'Type'), d.type || '');
   }

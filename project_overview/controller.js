@@ -714,6 +714,11 @@ function projectItems() {
     state.pub && state.pubDash && { a: on ? 'link-off' : 'link-on', label: on ? t('overview.linkOff', 'Public link off') : t('overview.linkOn', 'Public link on'), run: function () { setPublicLink(!on); } },
     on && { a: 'copy-link', label: t('overview.copyLink', 'Copy link'), run: copyLink },
     state.stations.length && { a: 'export', label: t('overview.export', 'Export data…'), run: openExport },
+    tb.serviceOf(state.projectAttrs || {}).retired
+      ? { a: 'reactivate-project', label: t('lifecycle.reactivate.ok', 'Reactivate'), run: function () { life.reactivateProject(e, state.projectAttrs, refreshAll); } }
+      : { a: 'archive-project', label: t('lifecycle.archiveProject.menu', 'Archive project…'), run: function () {
+        life.archiveProject(e, state.stations.map(function (s) { return { station: s.station, retired: s.service.retired }; }), refreshAll);
+      } },
     !active().length && { a: 'delete', label: t('lifecycle.menu.delete', 'Delete\u2026'), danger: true, run: function () {
       life.remove(e, retiredOnes().map(function (s) { return s.station; }), function () { openDashboard(opts.projectDashboardId); });
     } }

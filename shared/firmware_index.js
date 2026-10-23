@@ -78,5 +78,20 @@ function updateFor(index, hw, fw) {
   return { version: one ? tops[0].version : null, final: isFinal(tops[0].version) };
 }
 
-root.TerrySenseFirmwareIndex = { url: url, load: load, compare: compare, isFinal: isFinal, current: current, updateFor: updateFor };
+// A DRYC reports no board revision: the app assumes this one (FIRMWARE_DELIVERY.md §10).
+var DRYC_BOARD = 'DRYC3.0.0';
+
+function core(v) { return tagForm(v).replace(/-.*$/, ''); }
+
+/** What the index offers a DRYC running `fw` (`major.minor.patch`, the core only): { version, final }
+ * when the entry to take has a higher core, else null; one core's pre-releases cannot be ordered. */
+function drycUpdateFor(index, fw) {
+  var list = fw && ((index && index.boards) || {})[DRYC_BOARD];
+  if (!list || !list.length) { return null; }
+  var top = current(list.slice().sort(function (x, y) { return compare(y.version, x.version); }));
+  return compare(core(top.version), core(fw)) > 0 ? { version: top.version, final: isFinal(top.version) } : null;
+}
+
+root.TerrySenseFirmwareIndex = { url: url, load: load, compare: compare, isFinal: isFinal, current: current, updateFor: updateFor,
+  drycUpdateFor: drycUpdateFor };
 })(window);

@@ -33,7 +33,11 @@
  *   customer  *Settings* on the signed-in user's own customer, whatever the
  *             widget is bound to; not for the tenant, never on a public link
  * and `devicesDashboardId`, `projectDashboardId`. A link that does not apply to
- * the bound entity is left out.
+ * the bound entity is left out. Every row ends with *My notifications* (TC-14):
+ * the Settings view of the user's own customer, or of the defaults for the
+ * tenant, which opens with the user's own switches; never on a public link.
+ * A running silence (CA-19) shows as its chip: of the bound station, which the
+ * station view shows itself, and of each station the bound device feeds.
  *
  * Returns `{follow(key)}`: a view calls it after each load with what its links
  * depend on, and the row is rebuilt when that changes.
@@ -233,6 +237,37 @@ function build(ctx, tb, ui, card, opts) {
         button('charts', ICON_CHART, t('common.charts', 'Charts'), function () { tb.openDashboard(id, 'station', e); });
       });
     },
+    silence: function (e) {
+      function chip(until, station) {
+        var c = bar.appendChild(ui.stateChip('silenced', until));
+        if (station) { c.textContent = t('nav.stationSilenced', '{station}: {silence}', { station: station, silence: ui.silenceText(until) }); c.insertAdjacentHTML('afterbegin', ICON.mute); }
+      }
+      function running(s, named) {
+        return tb.attrsMap(s).then(function (a) {
+          var sv = tb.serviceOf(a);
+          if (!sv.retired && sv.silencedUntil) { chip(sv.silencedUntil, named ? s.name : null); }
+        }).catch(function () {});
+      }
+      if (!e) { return; }
+      if (e.kind === 'Station') { return card.classList.contains('ts-stv') ? null : running(e, false); }
+      if (e.entityType === 'DEVICE') {
+        return deviceStations(e).then(function (stations) { return Promise.all(stations.map(function (s) { return running(s, true); })); });
+      }
+    },
+    mine: function () {
+      if (tb.isPublicView() || !opts.projectDashboardId) { return; }
+      return tb.currentUser().then(function (me) {
+        var level = me.customerId && me.authority !== 'TENANT_ADMIN' ? Promise.resolve({ entityType: 'CUSTOMER', id: me.customerId.id })
+          : Promise.resolve(tb.io.fetchDefaults());
+        return level.then(function (e) {
+          if (!e) { return; }
+          // Not one of the links: every row ends with it.
+          var b = button('mine', ICON.bell, t('settings.mine', 'My notifications'), function () { tb.openDashboard(opts.projectDashboardId, 'settings', e); });
+          delete b.dataset.nav;
+          b.dataset.mine = '1';
+        });
+      });
+    },
     customer: function () {
       if (tb.isPublicView()) { return; }
       return tb.currentUser().then(function (me) {
@@ -258,13 +293,13 @@ function build(ctx, tb, ui, card, opts) {
     return tb.loadEntity(ds);
   }
 
-  var needsEntity = links.some(function (l) { return ['fleet', 'firmware', 'projects', 'customer'].indexOf(l) < 0; });
+  // The links that need no bound entity.
+  var FREE = ['fleet', 'firmware', 'projects', 'customer', 'mine'];
   tb.boundDatasource().then(function (ds) {
-    return needsEntity ? bound(ds) : null;
+    return bound(ds).catch(function () { return null; });
   }).then(function (e) {
-    if (needsEntity && !e) { return; }
     // One after the other, so the row keeps the order of `links`.
-    return links.reduce(function (done, link) {
+    return links.concat('silence', 'mine').filter(function (l) { return e || FREE.indexOf(l) >= 0; }).reduce(function (done, link) {
       return done.then(function () { return LINKS[link](e); });
     }, Promise.resolve());
   }).catch(function () {}).then(function () {

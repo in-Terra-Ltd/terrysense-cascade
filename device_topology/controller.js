@@ -82,6 +82,7 @@ function powerUnread(c) { return (parseJson(c['status.healthFaults']) || []).ind
 var UNKNOWN = 'unknown';
 function sdStates() { return { ready: t('device.sdReady', 'ready'), fault: t('device.sdFault', 'fault'), not_inserted: t('device.sdNoCard', 'no card') }; }
 var NEW_STATION = '__new';
+var NEW_PROJECT = '__newProject';
 // A source is silent past this many of its intervals (HEALTH.md §2).
 var NOT_READINGS = M.NOT_READINGS, RULE_SOURCE = M.RULE_SOURCE, DRYC_KEY = M.DRYC_KEY, LOGR2_SENSORS = M.LOGR2_SENSORS;
 function register() {
@@ -451,7 +452,13 @@ function bindDrawer(binding, preset) {
   var newFields = h('<div data-f="new" hidden><div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.newStationName', 'Name of the new station')) + '</span></div>' +
     '<div class="ts-ctl"><input class="ts-input wide" type="text" data-f="newName"></div></div>' +
     '<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.newStationIn', 'In')) + '</span></div><div class="ts-ctl">' +
-    '<select class="ts-select wide" data-f="parent"><option value="">' + esc(t('device.pickProject', 'Pick a project')) + '</option></select></div></div></div>');
+    '<select class="ts-select wide" data-f="parent"><option value="">' + esc(t('device.pickProject', 'Pick a project')) + '</option>' +
+    '<option value="' + NEW_PROJECT + '">' + esc(t('device.newProject', 'New project…')) + '</option></select></div></div>' +
+    '<div class="ts-field" data-f="newProject" hidden><div class="ts-field-label"><span>' + esc(t('device.newProjectName', 'Name of the new project')) + '</span></div>' +
+    '<div class="ts-ctl"><input class="ts-input wide" type="text" data-f="newProjectName"></div></div></div>');
+  newFields.querySelector('[data-f=parent]').addEventListener('change', function (ev) {
+    newFields.querySelector('[data-f=newProject]').hidden = ev.target.value !== NEW_PROJECT;
+  });
   var parents = [];
   if (binding) {
     stationField.querySelector('.ts-ctl').appendChild(h('<b></b>')).textContent = binding.station.name;
@@ -472,10 +479,12 @@ function bindDrawer(binding, preset) {
     });
     parentsToPick().then(function (list) {
       parents = list;
-      var psel = newFields.querySelector('[data-f=parent]');
+      var psel = newFields.querySelector('[data-f=parent]'), fresh = psel.querySelector('option[value="' + NEW_PROJECT + '"]');
       list.forEach(function (p) {
-        var o = document.createElement('option'); o.value = p.id; o.textContent = p.name; psel.appendChild(o);
+        var o = document.createElement('option'); o.value = p.id; o.textContent = p.name; psel.insertBefore(o, fresh);
       });
+      // A customer with no project yet creates its first one here (CA-6).
+      if (!list.length) { psel.value = NEW_PROJECT; psel.dispatchEvent(new Event('change')); }
     });
     sel.addEventListener('change', function () {
       var creating = sel.value === NEW_STATION;
@@ -596,10 +605,11 @@ function bindDrawer(binding, preset) {
     var chosen = chosenRows();
     if (!chosen.length) { ui.toast(t('device.pickMeasurement', 'Pick at least one measurement'), 'error'); return; }
     if (!binding && sel.value === NEW_STATION) {
-      var name = newFields.querySelector('[data-f=newName]').value.trim();
-      var parent = parents.filter(function (p) { return p.id === newFields.querySelector('[data-f=parent]').value; })[0];
-      if (!name || !parent) { ui.toast(t('device.nameNewStation', 'Name the new station and pick where it goes'), 'error'); return; }
-      save(null, {}, chosen, { name: name, parent: parent });
+      var name = newFields.querySelector('[data-f=newName]').value.trim(), where = newFields.querySelector('[data-f=parent]').value;
+      var projectName = newFields.querySelector('[data-f=newProjectName]').value.trim();
+      var parent = parents.filter(function (p) { return p.id === where; })[0];
+      if (!name || (where === NEW_PROJECT ? !projectName : !parent)) { ui.toast(t('device.nameNewStation', 'Name the new station and pick where it goes'), 'error'); return; }
+      save(null, {}, chosen, { name: name, parent: where === NEW_PROJECT ? { name: projectName, fresh: true } : parent });
       return;
     }
     if (!picked) { ui.toast(t('device.pickStation', 'Pick a station'), 'error'); return; }
@@ -635,7 +645,14 @@ function save(station, entries, chosen, create) {
   ui.confirm(text, t('common.save', 'Save')).then(function (ok) {
     if (!ok) { return; }
     var map = { 'config.channelMap': resolver.buildMap(next) };
-    return (create ? tb.createStation(create.name, create.parent, map) : tb.saveAttrs(station, map).then(function () { return station; })).then(function (s) {
+    // A new project, asked for in the same panel, is created only once confirmed.
+    var parent = !create || !create.parent.fresh ? Promise.resolve(create && create.parent) : tb.createProject(create.parent.name, ownerOf()).then(function (asset) {
+      var level = tb.assetLevel(asset);
+      level.ownerId = ownerOf().id;
+      create.parent = level;
+      return level;
+    });
+    return (create ? parent.then(function (p) { return tb.createStation(create.name, p, map); }) : tb.saveAttrs(station, map).then(function () { return station; })).then(function (s) {
       station = s;
       return relateToMap(station.id, next);
     }).then(function () {

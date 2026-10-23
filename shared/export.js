@@ -2,8 +2,7 @@
  * Project data export (CA-24) — `window.TerrySenseExport(get)`, `get(url,
  * params)` being tb_io's. Every station's readings over its whole history and
  * what reads them, as one ZIP built in the browser as the signed-in user.
- * Loads after resolver.js. Layout: logr-product-docs/cloud/FRONTEND.md *Project data export*;
- * terrysense/operations/archive.py writes the same.
+ * Loads after resolver.js. Layout: logr-product-docs/cloud/FRONTEND.md *Project data export*.
  */
 (function (root) {
 'use strict';

@@ -53,6 +53,8 @@ var ALL_SECTIONS = [
 ];
 var SECTIONS = ALL_SECTIONS;
 var LIST_KEYS = ['config.notify.contacts', 'config.notify.deviceContacts'];
+// On the TENANT: who receives each scheduled report, and the addresses report_deliver reads.
+var REPORTS = 'config.reportRecipients', REPORTS_RESOLVED = 'effective.reportRecipients';
 var BOOK = resolver.CONTACT_BOOK_KEY;
 var BOOK_NAME = 'terrySense contact book';
 // Assets that never hold a contact list (ATTRIBUTES.md §4, §7).
@@ -311,10 +313,12 @@ function load() {
       return Promise.all([
         resolver.buildChain(origin, io), io.fetchAttrs(origin),
         state.deviceBranch ? Promise.resolve({ channels: {}, stations: [] }) : resolver.discoverChannels(origin, io),
-        tb.canWrite(origin), state.deviceBranch ? sourceKeysOf(origin) : Promise.resolve([])
+        tb.canWrite(origin), state.deviceBranch ? sourceKeysOf(origin) : Promise.resolve([]),
+        tb.currentUser().catch(function () { return null; })
       ]);
     }).then(function (got) {
       var chain = got[0];
+      state.me = got[5];
       state.own = got[1];
       state.channelKinds = got[2].channels;
       state.stationCount = got[2].stations.length;
@@ -381,20 +385,47 @@ function loadBelow() {
     return Promise.all(levels.map(function (l) { return io.fetchAttrs(l).then(function (a) { return { level: l, attrs: a || {} }; }); }));
   }).then(function (below) {
     if (badges) { state.below = below; }
-    if (state.book.section) { state.book.usage = bookUsage((o.entityType === 'CUSTOMER' ? [{ level: o, attrs: state.own }] : []).concat(below)); }
+    if (!state.book.section) { return null; }
+    var holders = (o.entityType === 'CUSTOMER' ? [{ level: o, attrs: state.own }] : []).concat(below);
+    state.book.usage = bookUsage(holders, 'book');
+    state.book.userUsage = bookUsage(holders, 'user');
+    return Promise.all([loadReports(), state.users === null ? tb.listUsers(state.customerId).catch(function () { return []; }) : state.users])
+      .then(function (got) { state.users = got[1]; });
   });
 }
 
-function bookUsage(holders) {
+/** `{id: [use]}` of the contacts of `type` (`book` or `user`) the lists of `holders` name. */
+function bookUsage(holders, type) {
   var usage = {};
   holders.forEach(function (hd) {
     LIST_KEYS.forEach(function (key) {
       (parseVal(hd.attrs[key]) || []).forEach(function (c) {
-        if (c && c.type === 'book') { (usage[c.entryId] = usage[c.entryId] || []).push({ level: hd.level, attrs: hd.attrs, key: key }); }
+        var id = c && c.type === type && (type === 'book' ? c.entryId : c.userId);
+        if (id) { (usage[id] = usage[id] || []).push({ level: hd.level, attrs: hd.attrs, key: key }); }
       });
     });
   });
   return usage;
+}
+
+/** For the tenant, who alone reads them: the scheduled reports of this owner (ATTRIBUTES.md *Report recipients*),
+ * each contact a use beside the lists'. */
+function loadReports() {
+  state.book.reports = null;
+  if (!state.me || state.me.authority !== 'TENANT_ADMIN') { return Promise.resolve(); }
+  var tenant = { entityType: 'TENANT', id: state.me.tenantId.id }, owner = state.origin.entityType === 'CUSTOMER' ? state.origin.id : null;
+  return Promise.resolve().then(function () { return tb.attrsMap(tenant); }).then(function (a) {
+    var records = parseVal(a[REPORTS]) || {}, resolved = parseVal(a[REPORTS_RESOLVED]) || {};
+    state.book.reports = { tenant: tenant, records: records, resolved: resolved };
+    Object.keys(records).forEach(function (tid) {
+      var r = records[tid] || {};
+      if ((r.customerId || null) !== owner) { return; }
+      (r.contacts || []).forEach(function (c) {
+        var map = c.type === 'book' ? state.book.usage : c.type === 'user' ? state.book.userUsage : null, id = c.entryId || c.userId;
+        if (map && id) { (map[id] = map[id] || []).push({ report: tid, name: (resolved[tid] || {}).name || tid }); }
+      });
+    });
+  }).catch(function () {});
 }
 
 function renderHead() {
@@ -494,6 +525,7 @@ function emptyLine(what) {
 function render() {
   bodyEl.innerHTML = '';
   renderNotice();
+  renderMine();
   if (!state.defaultsShared) {
     bodyEl.appendChild(h('<div class="ts-banner warn">' + ICON.info + '<span>' + esc(t('settings.notShared', 'The in-Terra defaults are not shared with this customer, so they and the measurement names do not load. in-Terra shares the “Shared defaults” group.')) + '</span></div>'));
   }
@@ -688,6 +720,7 @@ function resetLower(list) {
 
 function entryName(e) { return (e && (e.name || e.sms || e.email)) || t('settings.unknownEntry', 'Unknown entry'); }
 function useText(u) {
+  if (u.report) { return t('settings.usedReport', '{name} (scheduled report)', { name: u.name }); }
   return u.key === LIST_KEYS[0] ? t('settings.usedMeasurement', '{name} (measurement alarms)', { name: u.level.name })
     : t('settings.usedDevice', '{name} (device alarms)', { name: u.level.name });
 }
@@ -717,6 +750,32 @@ function renderBook() {
   });
   if (!ids.length) { sec.appendChild(h('<div class="ts-empty">' + t('settings.noBookEntry', 'No external contact yet. <i>New external contact</i> in a contact list adds one.') + '</div>')); }
   bodyEl.appendChild(sec);
+  renderUsers();
+}
+
+/** The platform users a list or a report names, each replaced or removed everywhere in one action (CA-20). */
+function renderUsers() {
+  var usage = state.book.userUsage || {}, ids = Object.keys(usage);
+  if (!ids.length) { return; }
+  var sec = h('<div class="ts-section ts-book" data-section="users"><div class="ts-section-head">' + esc(t('settings.platformUsers', 'Platform users')) + '</div></div>');
+  ids.map(function (id) { return { id: id, u: userById(id) }; })
+    .sort(function (x, y) { return (x.u ? userName(x.u) : '').localeCompare(y.u ? userName(y.u) : ''); })
+    .forEach(function (x) {
+      var row = h('<div class="ts-row static"><div class="ts-row-main"><div class="ts-row-label"></div><div class="ts-row-meta"></div>' +
+        '<div class="ts-row-meta ts-used"></div></div>' + (state.readOnly ? '' : '<div class="ts-row-actions">' +
+        '<button type="button" class="ts-btn ghost" data-a="replace">' + esc(t('settings.replaceWith', 'Replace with…')) + '</button>' +
+        '<button type="button" class="ts-btn ghost" data-a="remove">' + esc(t('settings.removeEverywhere', 'Remove everywhere')) + '</button></div>') + '</div>');
+      row.setAttribute('data-user', x.id);
+      row.querySelector('.ts-row-label').textContent = x.u ? userName(x.u) : t('settings.unknownUser', 'Unknown user');
+      row.querySelector('.ts-row-meta').textContent = x.u ? [x.u.email, x.u.phone].filter(Boolean).join(' · ') : '';
+      row.querySelector('.ts-used').textContent = t('settings.usedIn', 'Used in {lists}', { lists: usage[x.id].map(useText).join(', ') });
+      if (!state.readOnly) {
+        row.querySelector('[data-a=replace]').addEventListener('click', function () { openReplace(x.id, 'user'); });
+        row.querySelector('[data-a=remove]').addEventListener('click', function () { removeUser(x.id); });
+      }
+      sec.appendChild(row);
+    });
+  bodyEl.appendChild(sec);
 }
 
 /** Name, SMS and e-mail inputs bound to `entry`, numbers checked as E.164. */
@@ -745,9 +804,9 @@ function entryValid(e) { return !(e.sms && !E164.test(e.sms)) && !(e.email && !E
 
 /** Write the book (when `entries`) and the rewritten lists, then resolve every
  * station the entry's lists reach; asks first when `always` or more than one. */
-function bookCommit(what, entries, rewrites, uses, button, always) {
+function bookCommit(what, entries, rewrites, uses, button, always, reportFn) {
   if (button) { button.disabled = true; }
-  return uniqueStations(uses.map(function (u) { return u.level; })).then(function (stations) {
+  return uniqueStations(uses.filter(function (u) { return u.level; }).map(function (u) { return u.level; })).then(function (stations) {
     var n = stations.length;
     var ask = always || n > 1
       ? ui.confirm(what + (n === 1 ? t('settings.updatesStationOne', ' This updates <b>1 station</b>.') : n ? t('settings.updatesStationMany', ' This updates <b>{n} stations</b>.', { n: n }) : ''),
@@ -758,6 +817,7 @@ function bookCommit(what, entries, rewrites, uses, button, always) {
       return saveBook(entries)
         .then(function () { return Promise.all(rewrites.map(function (r) { return tb.saveAttrs(r.level, r.write); })); })
         .then(function () { return tb.resolveStations(stations); })
+        .then(function () { return saveReports(uses, reportFn, entries); })
         .then(function () {
           ui.closeDrawer();
           ui.toast(n === 0 ? t('common.saved', 'Saved') : n === 1 ? t('settings.stationUpdatedOne', '1 station updated') : t('settings.stationUpdatedMany', '{n} stations updated', { n: n }));
@@ -765,6 +825,46 @@ function bookCommit(what, entries, rewrites, uses, button, always) {
         });
     });
   }).catch(function (err) { if (button) { button.disabled = false; } failed(err); });
+}
+
+/** The reports `uses` names, their contacts through `fn` when given, each resolved again as
+ * report_templates.py does: e-mail only, a contact left without an address named in `skipped`. */
+function saveReports(uses, fn, entries) {
+  var R = state.book.reports, touched = {};
+  uses.forEach(function (u) { if (u.report) { touched[u.report] = true; } });
+  if (!R || !Object.keys(touched).length) { return Promise.resolve(); }
+  var records = JSON.parse(JSON.stringify(R.records)), resolved = JSON.parse(JSON.stringify(R.resolved)), book = entries || state.book.entries;
+  return Promise.all(Object.keys(touched).map(function (tid) {
+    if (fn) { records[tid].contacts = fn(records[tid].contacts || []); }
+    return Promise.all((records[tid].contacts || []).map(function (c) {
+      return resolver.expandContacts([Object.assign({}, c, { viaEmail: true, severities: ['critical'] })], io, book).then(function (x) {
+        if (x[0] && x[0].email) { return { email: x[0].email }; }
+        if (c.type === 'user') { var u = userById(c.userId); return { skip: (u && u.email) || 'a removed contact' }; }
+        return { skip: ((book || {})[c.entryId] || {}).name || 'a removed contact' };
+      });
+    })).then(function (got) {
+      var emails = [], skipped = [];
+      got.forEach(function (g) { if (g.email) { if (emails.indexOf(g.email) < 0) { emails.push(g.email); } } else { skipped.push(g.skip); } });
+      resolved[tid] = Object.assign({}, resolved[tid], { emails: emails, skipped: skipped });
+    });
+  })).then(function () {
+    var w = {};
+    w[REPORTS] = JSON.stringify(records);
+    w[REPORTS_RESOLVED] = JSON.stringify(resolved);
+    return tb.saveAttrs(R.tenant, w);
+  });
+}
+
+/** `fn(list)` on the report contacts naming the contact `match` accepts: a replace swaps the reference, a remove drops it. */
+function reportRefs(match, target) {
+  return function (contacts) {
+    var out = [];
+    contacts.forEach(function (c) {
+      var n = match(c) ? target : c;
+      if (n && !out.some(function (x) { return contactKey(x) === contactKey(n); })) { out.push(n.type === 'user' ? { type: 'user', userId: n.userId } : { type: 'book', entryId: n.entryId }); }
+    });
+    return out;
+  };
 }
 
 /** The tenant's book is created on its first entry. */
@@ -785,7 +885,7 @@ function bookCopy() { return JSON.parse(JSON.stringify(state.book.entries)); }
 /** `fn(list)` applied to every list that names the entry, grouped per level. */
 function rewritesFor(uses, fn) {
   var byLevel = {};
-  uses.forEach(function (u) {
+  uses.filter(function (u) { return u.level; }).forEach(function (u) {
     var r = byLevel[u.level.id] = byLevel[u.level.id] || { level: u.level, write: {} };
     r.write[u.key] = fn(JSON.parse(JSON.stringify(parseVal(u.attrs[u.key]))));
   });
@@ -807,11 +907,15 @@ function openEntry(id) {
 
 function contactKey(c) { return c.type === 'user' ? 'u:' + c.userId : c.type === 'book' ? 'b:' + c.entryId : null; }
 
-/** `list` with entry `id` swapped for `make(contact)`; a contact already listed takes its severities. */
-function replaceIn(list, id, make) {
+function isRef(type, id) {
+  return function (c) { return !!c && c.type === type && (type === 'book' ? c.entryId : c.userId) === id; };
+}
+
+/** `list` with the contact `match` accepts swapped for `make(contact)`; a contact already listed takes its severities. */
+function replaceIn(list, match, make) {
   var out = [];
   list.forEach(function (c) {
-    var n = c && c.type === 'book' && c.entryId === id ? make(c) : c;
+    var n = match(c) ? make(c) : c;
     var twin = contactKey(n) && out.filter(function (x) { return contactKey(x) === contactKey(n); })[0];
     if (!twin) { out.push(n); return; }
     (n.severities || []).forEach(function (s) { if (twin.severities.indexOf(s) < 0) { twin.severities.push(s); } });
@@ -828,14 +932,18 @@ function swapped(c, target, hasSms, hasEmail) {
   return Object.assign(target, { viaSms: viaSms, viaEmail: viaEmail, severities: (c.severities || []).slice() });
 }
 
-function openReplace(id) {
+/** *Replace with…* of an external contact (`type` `book`) or a platform user (`user`). */
+function openReplace(id, type) {
+  type = type || 'book';
   var ready = state.users === null ? tb.listUsers(state.customerId).then(function (u) { state.users = u; }).catch(function () { state.users = []; }) : Promise.resolve();
   ready.then(function () {
-    var dr = ui.openDrawer(esc(t('settings.replaceWith', 'Replace with…')), esc(entryName(state.book.entries[id])));
-    var uses = (state.book.usage || {})[id] || [];
+    var self = type === 'book' ? entryName(state.book.entries[id]) : userById(id) ? userName(userById(id)) : t('settings.unknownUser', 'Unknown user');
+    var dr = ui.openDrawer(esc(t('settings.replaceWith', 'Replace with…')), esc(self));
+    var uses = ((type === 'book' ? state.book.usage : state.book.userUsage) || {})[id] || [], match = isRef(type, id);
     function pick(label, make) {
-      bookCommit(t('settings.replaceConfirm', 'Replace <b>{name}</b> with <b>{other}</b> in every list that names it?', { name: esc(entryName(state.book.entries[id])), other: esc(label) }),
-        null, rewritesFor(uses, function (list) { return replaceIn(list, id, make); }), uses, null, true);
+      bookCommit(t('settings.replaceConfirm', 'Replace <b>{name}</b> with <b>{other}</b> in every list that names it?', { name: esc(self), other: esc(label) }),
+        null, rewritesFor(uses, function (list) { return replaceIn(list, match, make); }), uses, null, true,
+        reportRefs(match, make({ severities: [] })));
     }
     function option(label, desc, attr, value, onPick) {
       var o = h('<div class="ts-opt" tabindex="0"><span class="ts-avatar"></span><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div></div>');
@@ -846,7 +954,7 @@ function openReplace(id) {
       o.addEventListener('click', onPick);
       dr.body.appendChild(o);
     }
-    var others = Object.keys(state.book.entries).filter(function (k) { return k !== id; });
+    var others = Object.keys(state.book.entries).filter(function (k) { return type !== 'book' || k !== id; });
     if (others.length) { dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.externalContacts', 'External contacts')) + '</div>')); }
     others.forEach(function (k) {
       var e = state.book.entries[k];
@@ -855,7 +963,7 @@ function openReplace(id) {
       });
     });
     if ((state.users || []).length) { dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.platformUsers', 'Platform users')) + '</div>')); }
-    (state.users || []).forEach(function (u) {
+    (state.users || []).filter(function (u) { return type !== 'user' || u.id.id !== id; }).forEach(function (u) {
       option(userName(u), u.email + (u.phone ? ' · ' + u.phone : t('settings.noPhone', ' · no phone')), 'data-user', u.id.id, function () {
         pick(userName(u), function (c) { return swapped(c, { type: 'user', userId: u.id.id }, !!u.phone, !!u.email); });
       });
@@ -865,11 +973,18 @@ function openReplace(id) {
 }
 
 function removeEntry(id) {
-  var entries = bookCopy(), uses = (state.book.usage || {})[id] || [];
+  var entries = bookCopy(), uses = (state.book.usage || {})[id] || [], match = isRef('book', id);
   var name = entryName(entries[id]);
   delete entries[id];
   bookCommit(t('settings.removeConfirm', 'Remove <b>{name}</b> from the external contacts and from every list that names it?', { name: esc(name) }), entries,
-    rewritesFor(uses, function (list) { return list.filter(function (c) { return !(c && c.type === 'book' && c.entryId === id); }); }), uses, null, true);
+    rewritesFor(uses, function (list) { return list.filter(function (c) { return !match(c); }); }), uses, null, true, reportRefs(match, null));
+}
+
+function removeUser(id) {
+  var uses = (state.book.userUsage || {})[id] || [], match = isRef('user', id), u = userById(id);
+  bookCommit(t('settings.removeUserConfirm', 'Remove <b>{name}</b> from every list and report that names them? The user account stays.',
+    { name: esc(u ? userName(u) : t('settings.unknownUser', 'Unknown user')) }), null,
+    rewritesFor(uses, function (list) { return list.filter(function (c) { return !match(c); }); }), uses, null, true, reportRefs(match, null));
 }
 
 // -- calculated measurements (measurement/vocabulary.md §4) ---------------------------
@@ -1082,6 +1197,53 @@ function pendingNotice(ch, stations, before) {
   })).then(function (lists) {
     var lines = [].concat.apply([], lists);
     return lines.length ? lines : null;
+  });
+}
+
+/** Where *My notifications* shows: the settings of the user's own customer, the defaults' for the tenant. */
+function mineHere() {
+  var me = state.me, o = state.origin;
+  if (!me) { return false; }
+  return me.authority === 'TENANT_ADMIN' ? o.kind === 'Defaults' : o.entityType === 'CUSTOMER' && !!me.customerId && me.customerId.id === o.id;
+}
+
+/** *My notifications* (TC-14): the signed-in user's own switches, editable by every user, also on a read-only view. */
+function renderMine() {
+  if (!mineHere()) { return; }
+  var sw = tb.switchesOf(state.me);
+  var on = { notify: sw['config.notify.enabled'] !== false, sms: sw['config.sms.enabled'] !== false, email: sw['config.email.enabled'] !== false };
+  var sec = bodyEl.appendChild(h('<div class="ts-section" data-section="mine"><div class="ts-section-head"></div><div class="ts-field-hint"></div>' +
+    '<label class="ts-switch"><input type="checkbox" data-f="notify"> <span></span></label>' +
+    '<label class="ts-switch"><input type="checkbox" data-f="sms"> <span></span></label>' +
+    '<label class="ts-switch"><input type="checkbox" data-f="email"> <span></span></label>' +
+    '<div><button type="button" class="ts-btn primary" data-a="save-mine" disabled></button></div></div>'));
+  sec.querySelector('.ts-section-head').textContent = t('settings.mine', 'My notifications');
+  sec.querySelector('.ts-field-hint').textContent = t('settings.mineHint', 'Whether alarms reach you, {name}, on every station that lists you as a contact.', { name: userName(state.me) });
+  var labels = { notify: t('settings.mineAll', 'Notify me'), sms: t('settings.mineSms', 'By SMS'), email: t('settings.mineEmail', 'By e-mail') };
+  var save = sec.querySelector('[data-a=save-mine]');
+  save.textContent = t('common.save', 'Save');
+  function box(f) { return sec.querySelector('[data-f=' + f + ']'); }
+  function sync() {
+    ['sms', 'email'].forEach(function (f) { box(f).disabled = !box('notify').checked; });
+    save.disabled = ['notify', 'sms', 'email'].every(function (f) { return box(f).checked === on[f]; });
+  }
+  Object.keys(labels).forEach(function (f) {
+    box(f).checked = on[f];
+    box(f).nextElementSibling.textContent = labels[f];
+    box(f).addEventListener('change', sync);
+  });
+  sync();
+  save.addEventListener('click', function () {
+    save.disabled = true;
+    tb.saveMySwitches({ 'config.notify.enabled': box('notify').checked, 'config.sms.enabled': box('sms').checked, 'config.email.enabled': box('email').checked })
+      .then(function (r) {
+        var info = state.me.additionalInfo = state.me.additionalInfo || {};
+        ['notify', 'sms', 'email'].forEach(function (f) { if (box(f).checked) { delete info['config.' + f + '.enabled']; } else { info['config.' + f + '.enabled'] = false; } });
+        ui.toast(!r.stations ? t('settings.mineSaved', 'Saved. No station lists you yet.')
+          : r.resolved ? t('settings.mineResolved', 'Saved. {n} stations that list you follow now.', { n: r.stations })
+            : t('settings.mineTonight', 'Saved. The {n} stations that list you follow tonight.', { n: r.stations }));
+        render();
+      }).catch(function (err) { save.disabled = false; ui.toast(t('common.notSaved', 'Not saved: {error}', { error: (err && err.message) || err }), 'error'); });
   });
 }
 

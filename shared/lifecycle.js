@@ -140,6 +140,32 @@ root.TerrySenseLifecycle = function (ui, tb) {
     }).catch(fail(t('lifecycle.reactivate.failed', 'Not reactivated: {error}')));
   }
 
+  /** *Archive project* (TA-9): every station still in service archived as *Archive* does (CA-17), the project
+   * marked `service.state` `retired` with the stations it archived in `service.archivedStations`, so that
+   * *Reactivate project* puts back those and no other. */
+  function archiveProject(project, stations, done) {
+    var live = stations.filter(function (s) { return !s.retired; });
+    ui.confirm(t('lifecycle.archiveProject.confirm', 'Archive <b>{name}</b> and its {n} stations in service? They raise no alarm, notify nobody and are never stale; their history stays for its retention and their dashboards stay. The project folds into Archived at the end of the projects list.',
+      { name: esc(project.name), n: live.length }), t('lifecycle.archiveProject.ok', 'Archive project')).then(function (ok) {
+      if (!ok) { return null; }
+      return Promise.all(live.map(function (s) { return tb.setServiceState(s.station, 'retired'); })).then(function () {
+        return tb.saveAttrs(project, { 'service.state': 'retired', 'service.archivedStations': JSON.stringify(live.map(function (s) { return s.station.id; })) });
+      }).then(function () { ui.toast(t('lifecycle.retire.done', '{name} archived', { name: project.name })); done(); });
+    }).catch(fail(t('lifecycle.retire.failed', 'Not archived: {error}')));
+  }
+
+  function reactivateProject(project, attrs, done) {
+    var ids = [];
+    try { ids = JSON.parse(attrs['service.archivedStations'] || '[]'); } catch (e) { ids = []; }
+    ui.confirm(t('lifecycle.reactivateProject.confirm', 'Reactivate <b>{name}</b> and the {n} stations archived with it? They raise alarms and notify their contacts again.',
+      { name: esc(project.name), n: ids.length }), t('lifecycle.reactivate.ok', 'Reactivate')).then(function (ok) {
+      if (!ok) { return null; }
+      return Promise.all(ids.map(function (id) { return tb.setServiceState({ entityType: 'ASSET', id: id }, null).catch(function () { return null; }); })).then(function () {
+        return tb.deleteAttrs(project, ['service.state', 'service.archivedStations']);
+      }).then(function () { ui.toast(t('lifecycle.inService', '{name} is in service', { name: project.name })); done(); });
+    }).catch(fail(t('lifecycle.reactivate.failed', 'Not reactivated: {error}')));
+  }
+
   /** *Delete* (CA-18): `target`, after the retired `stations` going with it,
    * confirmed by typing its name; their history only when ticked. */
   function remove(target, stations, done) {
@@ -219,7 +245,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
   function outOfService(device, done) {
     var states = G.SERVICE_STATES;
     var dr = ui.openDrawer(esc(t('common.outOfService', 'Out of service')), esc(deviceName(device)));
-    dr.body.appendChild(h('<div class="ts-field-hint">' + t('lifecycle.service.outHint', 'It raises no device alarm and leaves <i>Needs a look</i>; its history and stations stay. <i>Back in service</i> undoes it.') + '</div>'));
+    dr.body.appendChild(h('<div class="ts-field-hint">' + t('lifecycle.service.outHint', 'Its active alarms are cleared and it raises no device alarm; it leaves <i>Needs a look</i>, its history and stations stay. <i>Back in service</i> undoes it.') + '</div>'));
     Object.keys(states).forEach(function (value) {
       var o = dr.body.appendChild(h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>'));
       o.setAttribute('data-state', value);
@@ -306,7 +332,7 @@ root.TerrySenseLifecycle = function (ui, tb) {
 
   return {
     rename: rename, stationAdded: stationAdded, moveStation: moveStation, setPublic: setPublic, retire: retire, reactivate: reactivate,
-    remove: remove, silenceMenu: silenceMenu, endSilence: endSilence, stationItems: stationItems, changeList: changeList,
+    remove: remove, archiveProject: archiveProject, reactivateProject: reactivateProject, silenceMenu: silenceMenu, endSilence: endSilence, stationItems: stationItems, changeList: changeList,
     outOfService: outOfService, backInService: backInService, reassign: reassign, deviceChips: deviceChips, serviceItem: serviceItem
   };
 };

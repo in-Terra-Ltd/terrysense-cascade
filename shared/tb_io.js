@@ -155,18 +155,11 @@ root.TerrySenseTbIo = function (ctx) {
     fetchAllDevices: function () {
       return getAll('/api/user/devices', {}).then(function (list) { return list.map(deviceLevel); });
     },
-    // A user's own notification switches ride along as `switches`; a user
-    // whose attributes this viewer cannot read keeps them all on.
+    // A user's own notification switches, from their profile, ride along as `switches`.
     fetchUser: function (id) {
       return get('/api/user/' + id).then(function (u) {
-        return get('/api/plugins/telemetry/USER/' + id + '/values/attributes/SERVER_SCOPE',
-          { keys: 'config.notify.enabled,config.sms.enabled,config.email.enabled' })
-          .catch(function () { return []; })
-          .then(function (list) {
-            u.switches = {};
-            (list || []).forEach(function (a) { u.switches[a.key] = a.value; });
-            return u;
-          });
+        u.switches = switchesOf(u);
+        return u;
       }).catch(function () { return null; });
     }
   };
@@ -598,12 +591,99 @@ root.TerrySenseTbIo = function (ctx) {
       silencedUntil: until > Date.now() ? until : null, silencedBy: attrs['service.silencedBy'] || '' };
   }
 
-  /** A service state (ATTRIBUTES.md §4), or null for in service. */
+  /** A service state (ATTRIBUTES.md §4), or null for in service. A device going out of
+   * service clears its active alarms: the chains raise none while it is out. */
   function setServiceState(entity, value) {
-    return value ? saveAttrs(entity, { 'service.state': value }) : deleteAttrs(entity, ['service.state']);
+    if (!value) { return deleteAttrs(entity, ['service.state']); }
+    return saveAttrs(entity, { 'service.state': value }).then(function () {
+      if (entity.entityType !== 'DEVICE') { return null; }
+      return getAll('/api/alarm/DEVICE/' + entity.id, { searchStatus: 'ACTIVE' }).then(function (alarms) {
+        return Promise.all(alarms.filter(function (a) { return !a.originator || a.originator.id === entity.id; }).map(clearAlarm));
+      });
+    });
   }
 
   function userName(u) { return [u.firstName, u.lastName].filter(Boolean).join(' ') || u.email || ''; }
+
+  // -- a user's own notification switches (TC-14, ATTRIBUTES.md §4 *Platform user*) ----------------
+  // In the profile's additionalInfo: every user may save their own profile, a technician too.
+  var SWITCH_KEYS = ['config.notify.enabled', 'config.sms.enabled', 'config.email.enabled'];
+  var CONTACT_KEYS = ['config.notify.contacts', 'config.notify.deviceContacts'];
+
+  /** `{key: value}` of the switches `user` set; unset means on. */
+  function switchesOf(user) {
+    var info = (user && user.additionalInfo) || {}, out = {};
+    SWITCH_KEYS.forEach(function (k) { if (k in info) { out[k] = info[k]; } });
+    return out;
+  }
+
+  /** The levels whose contact lists name user `id`: assets in one query, then customers. */
+  function levelsNaming(id) {
+    function names(raw) {
+      var list = raw;
+      if (typeof list === 'string') { try { list = JSON.parse(list); } catch (e) { list = null; } }
+      return Array.isArray(list) && list.some(function (c) { return c && c.type === 'user' && c.userId === id; });
+    }
+    function query(filter, fields) {
+      return post('/api/entitiesQuery/find', {
+        entityFilter: filter, entityFields: fields.map(function (k) { return { type: 'ENTITY_FIELD', key: k }; }),
+        latestValues: CONTACT_KEYS.map(function (k) { return { type: 'SERVER_ATTRIBUTE', key: k }; }),
+        pageLink: { page: 0, pageSize: 1000 }
+      }).then(function (page) {
+        return ((page && page.data) || []).filter(function (e) {
+          var a = (e.latest && e.latest.SERVER_ATTRIBUTE) || {};
+          return CONTACT_KEYS.some(function (k) { return a[k] && names(a[k].value); });
+        }).map(function (e) {
+          var f = (e.latest && e.latest.ENTITY_FIELD) || {};
+          function v(k) { return f[k] && f[k].value; }
+          return { entityType: e.entityId.entityType, id: e.entityId.id, name: v('label') || v('name') || v('title'), key: v('name'), kind: v('type') };
+        });
+      }).catch(function () { return []; });
+    }
+    return Promise.all([
+      query({ type: 'assetType', assetTypes: ['Defaults', 'Project', 'Location', 'Station'], assetNameFilter: '' }, ['name', 'label', 'type']),
+      query({ type: 'entityType', entityType: 'CUSTOMER' }, ['title'])
+    ]).then(function (got) { return got[0].concat(got[1]); });
+  }
+
+  /** Every station whose contacts name user `id`, once each. */
+  function stationsNaming(id) {
+    return levelsNaming(id).then(function (levels) {
+      return Promise.all(levels.map(function (l) { return resolver.affectedStations(l, io).catch(function () { return []; }); }));
+    }).then(function (lists) {
+      var seen = {}, out = [];
+      lists.forEach(function (list) { (list || []).forEach(function (s) { if (!seen[s.id]) { seen[s.id] = true; out.push(s); } }); });
+      return out;
+    });
+  }
+
+  /** Whether the signed-in user may write the attributes of the stations they see. */
+  function mayWriteStations() {
+    return Promise.all([currentUser(), permissions()]).then(function (got) {
+      if ((got[0] || {}).authority === 'TENANT_ADMIN') { return true; }
+      var generic = ((got[1] || {}).userPermissions || {}).genericPermissions || {};
+      var ops = (generic.ASSET || []).concat(generic.ALL || []);
+      return ops.indexOf('ALL') >= 0 || ops.indexOf('WRITE_ATTRIBUTES') >= 0;
+    });
+  }
+
+  /** Save the signed-in user's own `switches` in their profile, then re-resolve every station
+   * naming them when the user may: `{stations, resolved}`; else the nightly sweep follows. */
+  function saveMySwitches(switches) {
+    return currentUser().then(function (me) {
+      return get('/api/user/' + me.id.id).then(function (user) {
+        var info = user.additionalInfo = user.additionalInfo || {};
+        SWITCH_KEYS.forEach(function (k) { if (switches[k] === false) { info[k] = false; } else { delete info[k]; } });
+        return post('/api/user', user);
+      }).then(function () {
+        return Promise.all([stationsNaming(me.id.id), mayWriteStations()]);
+      }).then(function (got) {
+        var stations = got[0];
+        if (!got[1] || !stations.length) { return { stations: stations.length, resolved: false }; }
+        return resolveStations(stations).then(function () { return { stations: stations.length, resolved: true }; });
+      });
+    });
+  }
 
   function silence(entity, until) {
     return currentUser().then(function (me) {
@@ -752,7 +832,7 @@ root.TerrySenseTbIo = function (ctx) {
     settingChanges: settingChanges, moveStation: moveStation, deleteHistory: deleteHistory, deleteEntity: deleteEntity,
     serviceOf: serviceOf, setServiceState: setServiceState, silence: silence, endSilence: endSilence,
     ackAlarm: ackAlarm, clearAlarm: clearAlarm, containedDevices: containedDevices, relateToMap: relateToMap, deviceStations: deviceStations,
-    latestFix: latestFix, userName: userName,
+    latestFix: latestFix, userName: userName, switchesOf: switchesOf, saveMySwitches: saveMySwitches, stationsNaming: stationsNaming,
     SILENCED_NOTICE: SILENCED_NOTICE, readingKeys: readingKeys, setLabel: setLabel, deviceParents: deviceParents,
     reassignDevice: reassignDevice
   };

@@ -338,6 +338,9 @@ function renderList() {
     });
     return;
   }
+  // An archived project (TA-9) folds into Archived at the end.
+  var archived = shown.filter(isArchived);
+  shown = shown.filter(function (p) { return !isArchived(p); });
   var placed = shown.filter(function (p) { return p.latLng; });
   var unplaced = shown.filter(function (p) { return !p.latLng; });
   if (placed.length) {
@@ -353,7 +356,16 @@ function renderList() {
     var ubody = card.appendChild(h('<div class="ts-proj-loc-body"></div>'));
     unplaced.forEach(function (entry) { ubody.appendChild(projectRow(entry)); });
   }
+  if (archived.length) {
+    var fold = listEl.appendChild(h('<details class="ts-proj-loc ts-projs-group" data-archived="1"><summary class="ts-proj-group"><span class="ts-chev">' + ICON.chev + '</span>' +
+      '<span class="ts-proj-group-name"></span><span class="ts-count"></span><span class="ts-spacer"></span></summary><div class="ts-proj-loc-body"></div></details>'));
+    fold.querySelector('.ts-proj-group-name').textContent = t('common.retired', 'Archived');
+    fold.querySelector('.ts-count').textContent = archived.length;
+    archived.forEach(function (entry) { fold.querySelector('.ts-proj-loc-body').appendChild(projectRow(entry)); });
+  }
 }
+
+function isArchived(entry) { return tb.serviceOf(entry.attrs || {}).retired; }
 
 /** One customer's projects, folding away; those with no position last, saying so. */
 function ownerGroup(o, mine) {
