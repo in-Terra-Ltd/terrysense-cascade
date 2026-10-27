@@ -45,6 +45,7 @@ var VOLT_OPS = { below: 1, above: 2 };
 var POLL_MS = opts.pollMs || 15000;
 var RULE_CHANNEL = 'drycRule';
 var SEVERITY_IDS = ['critical', 'major', 'minor', 'warning', 'indeterminate'];
+var VOLT_ALARM_KEY = /^channel\.drycVoltage\.alarm\.(\w+)\.threshold(Min|Max)$/;
 // The device stores them under the DRYC prefix, `dryc.` on a LOGR2, `p<position>.` on a LOGR4; state.live drops it.
 var LIVE_KEYS = [];
 for (var k = 1; k <= INPUTS; k++) { LIVE_KEYS.push('drycInput' + k); }
@@ -62,7 +63,7 @@ function clone(o) { return JSON.parse(JSON.stringify(o)); }
 // -- model ------------------------------------------------------------------------------
 
 var state = {
-  station: null, device: null, position: null, others: [], rules: null, saved: '', live: {}, server: {}, client: {},
+  station: null, device: null, position: null, others: [], rules: null, saved: '', stationAttrs: {}, live: {}, server: {}, client: {},
   writeDevice: false, writeStation: false, me: null
 };
 
@@ -157,6 +158,26 @@ function records(set) {
   return out;
 }
 
+/** The station's supply-voltage alarms, thresholds on its drycVoltage channel that the cloud checks (DRYC.md §4). */
+function voltAlarms() {
+  var out = [];
+  Object.keys(state.stationAttrs).forEach(function (key) {
+    var m = VOLT_ALARM_KEY.exec(key), raw = state.stationAttrs[key];
+    if (!m || SEVERITY_IDS.indexOf(m[1]) < 0 || raw === '' || raw === null || isNaN(Number(raw))) { return; }
+    out.push({ key: key, severity: m[1], op: m[2] === 'Min' ? 'below' : 'above', volts: Number(raw) });
+  });
+  return out.sort(function (a, b) { return SEVERITY_IDS.indexOf(a.severity) - SEVERITY_IDS.indexOf(b.severity); });
+}
+function voltAlarmKey(severity, op) { return 'channel.drycVoltage.alarm.' + severity + '.threshold' + (op === 'below' ? 'Min' : 'Max'); }
+
+/** What Send writes. Where the device reports only a record count, a voltage alarm keeps the
+ * always-matching wake record terrySense v1 sent for it, so a migrated device counts as in step (DRYC.md §4). */
+function deviceRecords(set) {
+  var recs = records(set);
+  if (!nano() && !capability().crc && voltAlarms().length) { recs.push([0, 0, 0]); }
+  return recs;
+}
+
 /** The records as a LOGR4 PERIPHERAL_OP carries them (TRX_NANO.md §10.4), and back. */
 function drycRules(recs) {
   return recs.map(function (x) {
@@ -237,7 +258,7 @@ function matching(r) {
 /** Where the device stands against the saved rules: `s` is the state, `short`
  * the header chip, `text` the sentence, `sent` and `confirmed` the steps' times. */
 function syncState() {
-  var want = JSON.stringify(records(normalise(parseJson(state.saved))));
+  var want = JSON.stringify(deviceRecords(normalise(parseJson(state.saved))));
   var n = JSON.parse(want).length;
   if (!state.device) { return { s: 'nodevice', short: t('common.noDevice', 'No device'), text: t('dryc.syncNoDevice', 'No digital I/O module feeds this station. The rules are kept here and sent once one is connected.') }; }
   if (nano() && !state.position) { return { s: 'nodevice', short: t('dryc.noInterface', 'No interface reported'), text: t('dryc.syncNoPosition', 'The device reports no digital I/O module on its bus. Rules are sent once it reports one.') }; }
@@ -336,6 +357,7 @@ function load() {
     dev ? tb.attrsMap(dev, 'CLIENT_SCOPE').catch(function () { return {}; }) : {}
   ]).then(function (got) {
     state.client = got[3] || {};
+    state.stationAttrs = got[0];
     var raw = parseJson(got[0]['dryc.rules']);
     state.saved = JSON.stringify(raw || null);
     state.rules = normalise(raw);
@@ -458,7 +480,7 @@ function save(set) {
 
 function sendRules() {
   if (!capability().voltage && state.rules.rules.some(hasVoltage)) { return; }
-  var recs = records(state.rules);
+  var recs = deviceRecords(state.rules);
   var device = esc(state.device.label || state.device.name);
   ui.confirm(recs.length === 1
     ? t('dryc.sendConfirmOne', 'Send 1 record to the digital I/O module of <b>{device}</b>? They replace the rules it runs now, after the logger’s next uplink.', { device: device })
@@ -556,7 +578,7 @@ function firmwareBanners() {
   }
   function version(v) { return v ? '<b>' + esc(v) + '</b>' : esc(t('dryc.notReported', 'not reported yet')); }
   if (!cap.loggerOk) {
-    banner('warn', 'logger-fw', t('dryc.loggerFw', 'Logger firmware {version}. Update it to {min} or later to confirm the rules the device holds and to use supply-voltage conditions. Until then the view compares only the number of rules.',
+    banner('warn', 'logger-fw', t('dryc.loggerFw', 'Logger firmware {version}. Update it to {min} or later to confirm the rules the device holds and to use supply-voltage conditions. Until then the view compares only the number of records.',
       { version: version(cap.logger), min: loggerMin() }));
   } else if (nano() && !cap.dryc && blocked) {
     banner('warn', 'dryc-fw-unknown', esc(t('dryc.drycFwUnknown', 'A supply-voltage condition needs digital I/O module firmware {min} or later, which this logger does not report. An older module refuses the rules, and this view then shows Refused.', { min: DRYC_FW_MIN })));
@@ -638,7 +660,7 @@ function rulesStep() {
   var head = sec.querySelector('.ts-section-head');
   if (canEdit()) {
     var add = h('<button type="button" class="ts-btn" data-a="add-rule">' + ICON.plus + esc(t('dryc.addRule', 'Add rule')) + '</button>');
-    add.disabled = records(state.rules).length >= MAX_RECORDS;
+    add.disabled = deviceRecords(state.rules).length >= MAX_RECORDS;
     add.addEventListener('click', function () { ruleDrawer(null); });
     head.appendChild(add);
   }
@@ -685,13 +707,59 @@ function rulesStep() {
     }
     sec.appendChild(row);
   });
+  sec.appendChild(cloudAlarms());
   return sec;
+}
+
+/** The supply-voltage alarms the cloud checks on every status, never sent to the device. */
+function cloudAlarms() {
+  var box = h('<div class="ts-dryc-cloud"><div class="ts-section-head"><span class="ts-dryc-t"></span><span class="ts-spacer"></span></div>' +
+    '<div class="ts-field-hint ts-dryc-hint"></div></div>');
+  box.querySelector('.ts-dryc-t').textContent = t('dryc.cloudAlarms', 'Checked by the cloud');
+  box.querySelector('.ts-dryc-hint').textContent = t('dryc.cloudAlarmsHint', 'Checked on every status the device sends, on any firmware. Not sent to the device: it switches no relay and does not wake the logger.');
+  if (canEdit()) {
+    var add = h('<button type="button" class="ts-btn" data-a="add-volt">' + ICON.plus + esc(t('dryc.addVoltAlarm', 'Add voltage alarm')) + '</button>');
+    add.addEventListener('click', function () { voltDrawer(null); });
+    box.querySelector('.ts-section-head').appendChild(add);
+  }
+  var volt = state.live.drycVoltage;
+  voltAlarms().forEach(function (a) {
+    var sev = G.severity(a.severity);
+    var supply = a.op === 'below' ? t('dryc.supplyBelow', 'Supply < {volts} V', { volts: a.volts.toFixed(1) })
+      : t('dryc.supplyAbove', 'Supply > {volts} V', { volts: a.volts.toFixed(1) });
+    var row = h('<div class="ts-rule" data-volt="' + esc(a.key) + '"><span class="ts-prec">V</span><div class="ts-grow">' +
+      '<div class="ts-rule-head"><span class="ts-row-label"></span><span class="ts-chip ts-rule-now"></span></div>' +
+      '<div class="ts-line"><span class="ts-k">' + esc(t('dryc.when', 'When')) + '</span><span class="ts-cond"><b>' + esc(supply) + '</b></span></div>' +
+      '<div class="ts-line"><span class="ts-k">' + esc(t('dryc.then', 'Then')) + '</span><span class="ts-chip"><span class="ts-sev" style="background:var(--sev-' + esc(sev.id) + ')"></span>' +
+      esc(t('dryc.stationAlarm', 'Station alarm · {severity}', { severity: sev.label })) + '</span></div></div><div class="ts-rule-acts"></div></div>');
+    row.querySelector('.ts-row-label').textContent = t('dryc.voltAlarm', 'Supply voltage alarm');
+    var now = volt ? (a.op === 'below' ? Number(volt.value) < a.volts : Number(volt.value) > a.volts) : null;
+    var nowEl = row.querySelector('.ts-rule-now');
+    nowEl.textContent = now === null ? t('dryc.noStatus', 'No status yet') : now ? t('dryc.matching', 'Matching now') : t('common.notMatching', 'Not matching');
+    nowEl.dataset.now = now === null ? 'unknown' : String(now);
+    if (canEdit()) {
+      var acts = row.querySelector('.ts-rule-acts');
+      [['edit', ICON.edit, t('common.edit', 'Edit')], ['del', ICON.close, t('common.delete', 'Delete')]].forEach(function (x) {
+        var b = acts.appendChild(h('<button type="button" class="ts-icon-btn" data-a="' + x[0] + '" title="' + esc(x[2]) + '"></button>'));
+        b.innerHTML = x[1];
+      });
+      acts.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-a]');
+        if (!b) { return; }
+        if (b.dataset.a === 'edit') { voltDrawer(a); return; }
+        ui.confirm(t('dryc.voltDeleteConfirm', 'Delete the supply voltage alarm <b>{supply}</b>?', { supply: esc(supply) }), t('common.delete', 'Delete'))
+          .then(function (ok) { if (ok) { commitVolt({}, [a.key], t('dryc.voltAlarmDeleted', 'Voltage alarm deleted')); } });
+      });
+    }
+    box.appendChild(row);
+  });
+  return box;
 }
 
 /** Step 3: saved here, sent, confirmed by the device; Send when the device lags. */
 function deviceStep(sync) {
   var sec = step(3, t('dryc.onDevice', 'On the device'), t('dryc.onDeviceHint', 'Saved rules reach the device only when sent. It takes them at its next uplink and confirms.'));
-  var n = records(state.rules).length;
+  var n = deviceRecords(state.rules).length;
   var steps = sec.appendChild(h('<ol class="ts-dryc-track"></ol>'));
   var saved = state.saved !== 'null';
   var nrules = state.rules.rules.length;
@@ -867,7 +935,7 @@ function ruleDrawer(idx) {
     return set;
   }
   function count() {
-    var nrec = records(draftSet()).length;
+    var nrec = deviceRecords(draftSet()).length;
     countEl.textContent = t('dryc.recordCount', 'The device holds {max} records: one per relay switched and one per alarm. These rules use {n}.', { max: MAX_RECORDS, n: nrec });
     countEl.classList.toggle('ts-error', nrec > MAX_RECORDS);
     activeIn.placeholder = conditionText(state.rules, read()) || t('dryc.ruleCondition', 'the rule’s condition');
@@ -882,10 +950,54 @@ function ruleDrawer(idx) {
       : x.condition.voltage && !cap.voltage ? t('dryc.cannotVolts', 'This device cannot check the supply voltage: set it to Ignored.')
       : !x.condition.mask && !x.condition.voltage ? t('dryc.needCondition', 'Set at least one input or the supply voltage.')
       : !(x.relays.relay1 || x.relays.relay2 || x.notify) ? t('dryc.needAction', 'Pick what the rule does: a relay, an alarm or both.')
-      : records(draftSet()).length > MAX_RECORDS ? t('dryc.tooManyRecords', 'That needs more than {max} records on the device.', { max: MAX_RECORDS })
+      : deviceRecords(draftSet()).length > MAX_RECORDS ? t('dryc.tooManyRecords', 'That needs more than {max} records on the device.', { max: MAX_RECORDS })
       : null;
     if (problem) { ui.toast(problem, 'error'); return; }
     commit(draftSet(), creating ? t('dryc.ruleAdded', 'Rule added') : t('dryc.ruleSaved', 'Rule saved'));
+  });
+}
+
+/** A voltage alarm's threshold is written on the station, then the rule set is saved again so its
+ * channel map carries drycVoltage, and the station resolved. */
+function commitVolt(write, remove, message) {
+  return tb.saveAttrs(state.station, write).then(function () { return tb.deleteAttrs(state.station, remove); })
+    .then(function () { return commit(clone(state.rules), message); },
+          function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
+}
+
+function voltDrawer(cur) {
+  var dr = ui.openDrawer(cur ? t('dryc.voltAlarm', 'Supply voltage alarm') : t('dryc.newVoltAlarm', 'New voltage alarm'),
+    esc(t('dryc.voltDrawerHint', 'Checked by the cloud on every status the device sends')));
+  var body = dr.body;
+  var f = body.appendChild(h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('dryc.whenSupply', 'When the supply voltage is')) + '</span></div>' +
+    '<div class="ts-ctl"><div class="ts-seg" data-f="vop"></div>' +
+    '<input class="ts-input" type="number" data-f="volts" min="0.1" max="60" step="0.1" placeholder="11.5"><span class="ts-row-meta">V</span></div></div>'));
+  var vseg = f.querySelector('[data-f=vop]'), voltsIn = f.querySelector('[data-f=volts]');
+  [['below', t('common.below', 'Below')], ['above', t('common.above', 'Above')]].forEach(function (o) {
+    var b = vseg.appendChild(h('<button type="button"></button>'));
+    b.dataset.v = o[0];
+    b.textContent = o[1];
+    b.setAttribute('aria-pressed', String(o[0] === (cur ? cur.op : 'below')));
+  });
+  vseg.addEventListener('click', function (e) {
+    var b = e.target.closest('button');
+    if (b) { vseg.querySelectorAll('button').forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); }); }
+  });
+  voltsIn.value = cur ? cur.volts : '';
+  var s = body.appendChild(h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('common.severity', 'Severity')) + '</span></div>' +
+    '<div class="ts-ctl"><select class="ts-select" data-f="severity"></select></div>' +
+    '<div class="ts-field-hint">' + esc(t('dryc.voltAlarmHint', 'A station alarm on the supply voltage, notified to the station’s alarm contacts.')) + '</div></div>'));
+  var sevSel = s.querySelector('[data-f=severity]');
+  G.SEVERITIES.slice().reverse().forEach(function (x) {
+    var o = document.createElement('option'); o.value = x.id; o.textContent = x.label; sevSel.appendChild(o);
+  });
+  sevSel.value = cur ? cur.severity : 'warning';
+  ui.drawerActions(dr, cur ? t('common.save', 'Save') : t('dryc.addVoltAlarm', 'Add voltage alarm')).addEventListener('click', function () {
+    var volts = Math.round(Number(voltsIn.value) * 10) / 10;
+    if (!(volts >= 0.1 && volts <= 60)) { ui.toast(t('dryc.needVolts', 'Give a supply voltage from 0.1 to 60 V.'), 'error'); return; }
+    var key = voltAlarmKey(sevSel.value, vseg.querySelector('[aria-pressed=true]').dataset.v), write = {};
+    write[key] = volts;
+    commitVolt(write, cur && cur.key !== key ? [cur.key] : [], cur ? t('dryc.voltAlarmSaved', 'Voltage alarm saved') : t('dryc.voltAlarmAdded', 'Voltage alarm added'));
   });
 }
 
