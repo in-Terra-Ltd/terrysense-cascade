@@ -224,13 +224,22 @@ root.TerrySenseTbIo = function (ctx) {
 
   /** Re-resolve `stations` and write only what changed (every attribute write
    * re-triggers `station_entry`). */
+  // A few at a time: a customer's stations all at once is more requests than the browser keeps.
+  var RESOLVE_PARALLEL = 4;
+
   function resolveStations(stations) {
-    return Promise.all(stations.map(function (station) {
-      return Promise.all([resolver.resolveStation(station, io), io.fetchAttrs(station)]).then(function (r) {
+    var cache = resolver.createCache(), next = 0;
+    function worker() {
+      if (next >= stations.length) { return Promise.resolve(); }
+      var station = stations[next++];
+      return Promise.all([resolver.resolveStation(station, io, cache), io.fetchAttrs(station)]).then(function (r) {
         var diff = resolver.effectiveDiff(r[1], r[0]);
         return saveAttrs(station, diff.toWrite).then(function () { return deleteAttrs(station, diff.toDelete); });
-      });
-    }));
+      }).then(worker);
+    }
+    var workers = [];
+    for (var i = 0; i < Math.min(RESOLVE_PARALLEL, stations.length); i++) { workers.push(worker()); }
+    return Promise.all(workers);
   }
 
   // -- channel staleness (HEALTH.md §2) ---------------------------------------
