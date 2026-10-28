@@ -536,13 +536,20 @@ function render() {
   Object.keys(own).filter(function (ch) { return !isRule(ch); }).sort(function (a, b) { return chLabel(a).localeCompare(chLabel(b)); }).forEach(function (ch) {
     var row = h('<div class="ts-row" tabindex="0"><div class="ts-row-main"><div class="ts-row-label"></div><div class="ts-row-meta"></div></div>' +
       '<div class="ts-row-value">' + channelChips(ch, own[ch], ownVal) + '</div>' +
-      (state.readOnly ? '' : '<div class="ts-row-actions"><button type="button" class="ts-icon-btn" title="' + esc(t('common.edit', 'Edit')) + '">' + ICON.edit + '</button></div>') + '</div>');
+      (state.readOnly ? '' : '<div class="ts-row-actions"><button type="button" class="ts-icon-btn" data-act="reset" title="' + esc(t('settings.resetToInherited', 'Reset to inherited')) + '">' + ICON.reset + '</button>' +
+        '<button type="button" class="ts-icon-btn" title="' + esc(t('common.edit', 'Edit')) + '">' + ICON.edit + '</button></div>') + '</div>');
+    row.setAttribute('data-channel', ch);
     row.querySelector('.ts-row-label').textContent = chLabel(ch);
     if (state.deviceBranch) { sourceMeta(row.querySelector('.ts-row-meta'), ch); } else { row.querySelector('.ts-row-meta').textContent = kindLabel(ch); }
     if (onMeasurement(ch)) { row.querySelector('.ts-row-value').insertAdjacentHTML('afterbegin', measurementChip()); }
     var keys = Object.keys(state.own).filter(function (k) { return k.indexOf(CH + ch + '.') === 0; });
     lowerBadge(row, chLabel(ch), keys);
-    if (!state.readOnly) { row.addEventListener('click', function () { openChannel(ch, false); }); }
+    if (!state.readOnly) {
+      row.addEventListener('click', function (e) {
+        if (e.target.closest('[data-act=reset]')) { e.stopPropagation(); resetChannel(ch, keys); return; }
+        openChannel(ch, false);
+      });
+    }
     sec.appendChild(row);
   });
   if (state.showInherited) {
@@ -1261,6 +1268,15 @@ function resetScalar(d) {
   ui.confirm(hit ? t('settings.resetConfirm', 'Reset <b>{label}</b> to the value inherited from {level}?', { label: esc(d.label), level: esc(levelLabel(hit.from)) })
     : t('settings.resetConfirmNothing', 'Reset <b>{label}</b> to nothing (not set anywhere above)?', { label: esc(d.label) }), t('settings.reset', 'Reset'))
     .then(function (ok) { if (ok) { commit({}, [d.key], d.label); } });
+}
+
+/** Deletes every setting of the channel made here: its limits, margin, wording and name. */
+function resetChannel(ch, keys) {
+  var label = chLabel(ch);
+  var above = keys.some(function (k) { return !!inherited(k); });
+  ui.confirm(above ? t('settings.resetChannelConfirm', 'Delete the settings of <b>{label}</b> made here? It then takes those set above.', { label: esc(label) })
+    : t('settings.resetChannelConfirmNothing', 'Delete the settings of <b>{label}</b> made here? Nothing is set above: it then has no limit.', { label: esc(label) }), t('common.delete', 'Delete'))
+    .then(function (ok) { if (ok) { commit({}, keys, label); } });
 }
 
 /** A side panel that names the entity its changes are saved on. */
