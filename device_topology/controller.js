@@ -45,7 +45,10 @@
  * view a station opens and whose Dry contact interface view the DRYC card opens,
  * and `devicesDashboardId`.
  *
- * Loads after shared/resolver.js, glossary.js, ui.js, tb_io.js, calculations.js and lifecycle.js.
+ * After a save that makes a station store measurements of this device, the offer to copy its earlier
+ * readings of a period onto the station (shared/history.js).
+ *
+ * Loads after shared/resolver.js, glossary.js, ui.js, tb_io.js, calculations.js, lifecycle.js and history.js.
  */
 
 window.TerrySenseDeviceTopology = function (ctx, container, opts) {
@@ -63,6 +66,7 @@ var calc = window.TerrySenseCalculations(ui, tb);
 var h = ui.h, esc = ui.esc, ICON = ui.ICON, info = ui.info, metric = ui.metric;
 var camel = resolver.camelKind;
 var M = window.TerrySenseMapping;
+var History = window.TerrySenseHistory;
 
 var FAULT_PREFIX = 'peripheralFault.';
 var REFRESH_MS = 60000;
@@ -417,6 +421,12 @@ function othersOf(entries) { return M.othersOf(entries, state.device.id.id); }
 
 function relateToMap(stationId, entries) { return tb.relateToMap({ entityType: 'ASSET', id: stationId }, entries); }
 
+/** Offer this device's earlier readings to `station`, whose map entries went from `before` to `after` at `at`. */
+function offerHistory(station, before, after, at) {
+  var d = deviceEntity();
+  return History.offer(ui, tb, station, { entityType: 'DEVICE', id: d.id, name: d.label || d.name }, before, after, at, state.names);
+}
+
 function stationsToPick() {
   var owner = ownerOf();
   return owner.entityType === 'CUSTOMER' ? tb.io.fetchCustomerStations({ id: owner.id }) : tb.io.fetchAllStations();
@@ -644,6 +654,7 @@ function save(station, entries, chosen, create) {
       ? t('device.takenOver', ' These channels move from another device to this one, their history kept: {list}.', { list: '<b>' + takenOver.map(esc).join(', ') + '</b>' }) : '');
   ui.confirm(text, t('common.save', 'Save')).then(function (ok) {
     if (!ok) { return; }
+    var at = Date.now();
     var map = { 'config.channelMap': resolver.buildMap(next) };
     // A new project, asked for in the same panel, is created only once confirmed.
     var parent = !create || !create.parent.fresh ? Promise.resolve(create && create.parent) : tb.createProject(create.parent.name, ownerOf()).then(function (asset) {
@@ -663,6 +674,8 @@ function save(station, entries, chosen, create) {
     }).then(function () {
       ui.closeDrawer();
       return refresh();
+    }).then(function () {
+      return offerHistory(station, entries, next, at);
     }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
   });
 }
@@ -765,6 +778,7 @@ function storeDrawer(r) {
       return '<li>' + esc(c.x.b.station.name) + ': ' + esc(c.p.note) + '</li>';
     }).join('') + '</ul>', t('common.save', 'Save')).then(function (ok) {
       if (!ok) { return; }
+      var at = Date.now();
       return Promise.all(changes.map(function (c) {
         return tb.saveAttrs(c.x.b.station, { 'config.channelMap': resolver.buildMap(c.p.next) }).then(function () {
           return relateToMap(c.x.b.station.id, c.p.next);
@@ -775,6 +789,10 @@ function storeDrawer(r) {
         ui.toast(t('common.saved', 'Saved'));
         ui.closeDrawer();
         return refresh();
+      }).then(function () {
+        return changes.reduce(function (work, c) {
+          return work.then(function () { return offerHistory(c.x.b.station, c.x.b.entries, c.p.next, at); });
+        }, Promise.resolve());
       }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
     });
   });
@@ -981,7 +999,7 @@ function replaceDrawer() {
       (carried.length ? t('device.takesOver', ' It takes over: {list}.', { list: carried.map(function (r) { return esc(r.text); }).join('; ') }) : ''), t('device.replace', 'Replace'))
       .then(function (ok) {
         if (!ok) { return; }
-        var moved = [];
+        var moved = [], at = Date.now();
         return Promise.all(bound.map(function (b) {
           var next = {}, keys = [];
           Object.keys(b.entries).forEach(function (c) {
@@ -989,7 +1007,8 @@ function replaceDrawer() {
             var p = picks.filter(function (x) { return x.dataset.station === b.station.id && x.dataset.channel === c; })[0];
             if (p && p.value) { next[c] = { device: target.id, key: p.value }; keys.push(b.entries[c].key); }
           });
-          moved.push({ station: b.station, attrs: b.attrs, channels: Object.keys(next).filter(function (c) { return next[c].device === target.id; }), keys: keys });
+          moved.push({ station: b.station, attrs: b.attrs, channels: Object.keys(next).filter(function (c) { return next[c].device === target.id; }), keys: keys,
+            before: b.entries, after: next, at: at });
           return tb.saveAttrs(b.station, { 'config.channelMap': resolver.buildMap(next) }).then(function () {
             return relateToMap(b.station.id, next);
           });
@@ -1001,6 +1020,13 @@ function replaceDrawer() {
           });
         }).then(function () {
           return tb.resolveStations(bound.map(function (b) { return b.station; }).concat([target]));
+        }).then(function () {
+          var io = History(tb.get, tb.post);
+          return Promise.all(moved.map(function (m) {
+            return io.survey(target, m.station, History.added(m.before, m.after, target.id), at).then(function (rows) {
+              m.earlier = rows.some(function (r) { return r.last; });
+            }).catch(function () { m.earlier = false; });
+          }));
         }).then(function () {
           state.followUp = { target: target, steps: followUpSteps(target, moved) };
           ui.toast(t('device.replaced', 'Device replaced'));
@@ -1045,6 +1071,17 @@ function followUpSteps(target, moved) {
     if (!refs.length) { return; }
     var step = { a: 'zero', label: t('device.stepZero', 'Set the zero reference on {station}', { station: m.station.name }), action: t('device.stepSet', 'Set…') };
     step.run = function () { zeroDrawer(step, m.station, refs); };
+    steps.push(step);
+  });
+  moved.forEach(function (m) {
+    if (!m.earlier) { return; }
+    var step = { a: 'history', label: t('history.step', 'Copy the earlier readings of {device} to {station}', { device: target.name, station: m.station.name }),
+                 action: t('history.stepAction', 'Copy…') };
+    step.run = function () {
+      History.offer(ui, tb, m.station, { entityType: 'DEVICE', id: target.id, name: target.name }, m.before, m.after, m.at, state.names).then(function (done) {
+        if (done) { step.done = true; render(); }
+      });
+    };
     steps.push(step);
   });
   steps.push({ a: 'out-of-service', label: t('device.stepOutOfService', 'Mark {device} out of service', { device: state.device.label || state.device.name }),

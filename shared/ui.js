@@ -497,7 +497,7 @@ root.TerrySenseUi = function (rootEl) {
     followUp: followUp, confirmTyped: confirmTyped, inlineEdit: inlineEdit,
     productImage: productImage, radioLevel: radioLevel, metric: metric,
     ICON: ICON, esc: esc, h: h, info: info, sevDot: sevDot, glossary: glossary,
-    toast: toast, confirm: confirm, openDrawer: openDrawer, closeDrawer: closeDrawer,
+    toast: toast, confirm: confirm, card: card, openDrawer: openDrawer, closeDrawer: closeDrawer,
     drawerActions: drawerActions, popover: popover, namePicker: namePicker, nameOption: nameOption
   };
 };

@@ -27,7 +27,7 @@
  * `opts`, set by build_project_dashboard.py: `devicesDashboardId` (the device
  * card), `projectDashboardId` (the project card).
  *
- * Loads after shared/resolver.js, mapping.js, glossary.js, ui.js, tb_io.js, lifecycle.js and templates.js.
+ * Loads after shared/resolver.js, mapping.js, glossary.js, ui.js, tb_io.js, lifecycle.js, templates.js and history.js.
  */
 
 window.TerrySenseStationView = function (ctx, container, opts) {
@@ -36,6 +36,7 @@ opts = opts || {};
 var t = window.TerrySenseI18n(ctx);
 var resolver = window.TerrySenseResolver;
 var M = window.TerrySenseMapping;
+var History = window.TerrySenseHistory;
 var G = window.TerrySenseGlossary;
 var tb = window.TerrySenseTbIo(ctx);
 var root = container.querySelector('.ts-root') || container;
@@ -876,7 +877,7 @@ function saveMapping(d, r, c, target, labelText) {
     (p.notes.length ? ' ' + p.notes.map(esc).join(' ') : '');
   (mapChanged ? ui.confirm(text, t('common.save', 'Save')) : Promise.resolve(true)).then(function (ok) {
     if (!ok) { return null; }
-    var s = state.station, write = {};
+    var s = state.station, write = {}, before = state.entries, at = Date.now();
     if (mapChanged) { write['config.channelMap'] = resolver.buildMap(p.next); }
     if (labelChanged && labelText) { write[labelKey] = labelText; }
     return tb.saveAttrs(s, write).then(function () {
@@ -889,7 +890,9 @@ function saveMapping(d, r, c, target, labelText) {
       ui.closeDrawer();
       ui.toast(t('common.saved', 'Saved'));
       return refresh();
-    });
+    }).then(function () {
+      return mapChanged ? History.offer(ui, tb, s, { entityType: 'DEVICE', id: d.id, name: deviceName(d) }, before, p.next, at, state.names) : null;
+    }).then(function (copied) { return copied ? refresh() : null; });
   }).catch(function (err) { ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error'); });
 }
 
