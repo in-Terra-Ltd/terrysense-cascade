@@ -112,7 +112,7 @@ function loadProject(asset) {
       var area = parseJson(got[0].perimeter);
       area = Array.isArray(area) && area.length >= 3 ? area : null;
       var entry = { project: project, ownerId: asset.ownerId, owner: got[2], attrs: got[0], area: area, stations: entries,
-        homeId: more[1] };
+        homeId: more[1], color: ui.markerColor(got[0]) };
       entry.latLng = centre(area || entries.filter(function (s) { return s.latLng; }).map(function (s) { return s.latLng; }));
       entry.status = statusOf(entry);
       return entry;
@@ -146,6 +146,9 @@ function statusOf(entry) {
   if (!worst) { return STATUS.ok; }
   return { id: 'alarm', label: t.severity(worst, G.severity(worst).label), color: 'var(--sev-' + worst + ')', rank: 10 + G.rank(worst) };
 }
+
+/** The colour of a marker's dot: an alarm's severity, or No station; none when OK. */
+function dotOf(status) { return status.id === 'ok' ? null : status.color; }
 
 function worstOf(entries) {
   return entries.reduce(function (w, p) { return !w || p.status.rank > w.rank ? p.status : w; }, null) || STATUS.none;
@@ -215,10 +218,6 @@ function fail(text) {
 
 var map = null, clusterLayer = null, areaLayer = null, markers = {}, fitted = false;
 
-function pinHtml(color, text) {
-  return '<span class="ts-pin" style="--c:' + color + '"><b>' + esc(text) + '</b></span>';
-}
-
 function select(ids) {
   state.filter = ids;
   renderList();
@@ -246,7 +245,7 @@ function initMap() {
     iconCreateFunction: function (cluster) {
       var entries = cluster.getAllChildMarkers().map(function (m) { return m.options.entry; });
       return L.divIcon({ className: 'ts-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15],
-        html: pinHtml(worstOf(entries).color, String(entries.length)) });
+        html: ui.pin('var(--ts-accent)', String(entries.length), dotOf(worstOf(entries))) });
     }
   }).addTo(map);
   clusterLayer.on('clusterclick', function (ev) {
@@ -271,11 +270,11 @@ function drawMarkers() {
     if (!entry.latLng) { return; }
     var selected = state.filter && state.filter.length === 1 && state.filter[0] === entry.project.id;
     if (entry.area) {
-      var poly = L.polygon(entry.area, { color: '#0277b7', weight: selected ? 3 : 1.5, fillOpacity: selected ? 0.12 : 0.04 });
+      var poly = L.polygon(entry.area, { color: entry.color, weight: selected ? 3 : 1.5, fillOpacity: selected ? 0.12 : 0.04 });
       poly.on('click', function () { toggle(entry); });
       areaLayer.addLayer(poly);
     }
-    var icon = L.divIcon({ className: 'ts-pin-wrap', iconSize: [22, 22], iconAnchor: [11, 11], html: pinHtml(entry.status.color, '') });
+    var icon = L.divIcon({ className: 'ts-pin-wrap', iconSize: [22, 22], iconAnchor: [11, 11], html: ui.pin(entry.color, '', dotOf(entry.status)) });
     var m = L.marker(entry.latLng, { icon: icon, keyboard: true, title: entry.project.name, entry: entry });
     m.bindTooltip(esc(entry.project.name) + ' · ' + esc(entry.status.label), { direction: 'top', offset: [0, -10] });
     m.on('click', function (ev) { L.DomEvent.stopPropagation(ev); toggle(entry); });

@@ -125,6 +125,20 @@ root.TerrySenseUi = function (rootEl) {
   function info(key) { return '<span class="ts-info" tabindex="0" data-tip="' + esc(key) + '">' + ICON.info + '</span>'; }
   function sevDot(id) { return '<span class="ts-dot" style="background:var(--sev-' + esc(id) + ')"></span>'; }
 
+  /** The colour picked for a project or a station, its `config.color`; terrySense blue without one. A hex
+   * colour, as Leaflet writes it into SVG attributes, where no CSS variable resolves. */
+  function markerColor(attrs) {
+    var c = attrs && attrs['config.color'];
+    return /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#0277b7';
+  }
+
+  /** A map marker in `color`, `text` inside it, and in its top right corner a dot of colour `dot`, the state, or the silenced badge. */
+  function pin(color, text, dot, silenced) {
+    return '<span class="ts-pin' + (silenced ? ' silenced' : '') + '" style="--c:' + color + '"><b>' + esc(text) + '</b>' +
+      (dot ? '<i class="ts-pin-dot" style="--d:' + dot + '"></i>' : '') +
+      (silenced ? '<i class="ts-pin-badge">' + ICON.mute + '</i>' : '') + '</span>';
+  }
+
   function card() { return rootEl.querySelector('.ts-card') || rootEl; }
 
   function toast(text, kind) {
@@ -496,7 +510,7 @@ root.TerrySenseUi = function (rootEl) {
     rowMenu: rowMenu, tenantSection: tenantSection, stateChip: stateChip, pendingChip: pendingChip, silenceText: silenceText, when: when,
     followUp: followUp, confirmTyped: confirmTyped, inlineEdit: inlineEdit,
     productImage: productImage, radioLevel: radioLevel, metric: metric,
-    ICON: ICON, esc: esc, h: h, info: info, sevDot: sevDot, glossary: glossary,
+    ICON: ICON, esc: esc, h: h, info: info, sevDot: sevDot, markerColor: markerColor, pin: pin, glossary: glossary,
     toast: toast, confirm: confirm, card: card, openDrawer: openDrawer, closeDrawer: closeDrawer,
     drawerActions: drawerActions, popover: popover, namePicker: namePicker, nameOption: nameOption
   };

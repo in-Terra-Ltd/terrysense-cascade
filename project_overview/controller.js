@@ -125,6 +125,7 @@ function loadStation(station) {
   return tb.attrsMap(station).then(function (attrs) {
     entry.attrs = attrs;
     entry.latLng = latLngOf(attrs);
+    entry.color = ui.markerColor(attrs);
     entry.service = tb.serviceOf(attrs);
     var keys = Object.keys(resolver.channelsFromAttrs(attrs, state.names));
     return Promise.all([
@@ -208,6 +209,9 @@ function statusOf(entry) {
   return Object.assign({ id: 'ok' }, STATUS.ok);
 }
 
+/** The colour of a marker's dot: an alarm's severity or No data; none when OK or archived. */
+function dotOf(status) { return status.id === 'alarm' || status.id === 'nodata' ? status.color : null; }
+
 function worstOf(entries) {
   return entries.reduce(function (w, s) { return !w || s.status.rank > w.rank ? s.status : w; }, null) || STATUS.none;
 }
@@ -274,11 +278,6 @@ function fail(text) {
 
 var map = null, clusterLayer = null, areaLayer = null, markers = {}, fitted = false;
 
-function pinHtml(color, text, silenced) {
-  return '<span class="ts-pin' + (silenced ? ' silenced' : '') + '" style="--c:' + color + '"><b>' + esc(text) + '</b>' +
-    (silenced ? '<i class="ts-pin-badge">' + ICON.mute + '</i>' : '') + '</span>';
-}
-
 function initMap() {
   var L = window.L;
   map = L.map(mapEl, { zoomControl: true, attributionControl: true }).setView([46.8, 8.2], 7);
@@ -294,14 +293,13 @@ function initMap() {
   layers[t('map.swiss', 'Swiss map')] = swiss;
   layers[t('map.aerial', 'Aerial')] = aerial;
   L.control.layers(layers, null, { position: 'topright' }).addTo(map);
-  // Stations close together at the current zoom are one cluster, coloured by the
-  // worst of them (FRONTEND.md *Projects dashboard*).
+  // Stations close together at the current zoom are one cluster in terrySense blue, its dot the worst of them (FRONTEND.md *Projects dashboard*).
   clusterLayer = L.markerClusterGroup({
     showCoverageOnHover: false, maxClusterRadius: 40, zoomToBoundsOnClick: false,
     iconCreateFunction: function (cluster) {
       var entries = cluster.getAllChildMarkers().map(function (m) { return m.options.entry; });
       return L.divIcon({ className: 'ts-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15],
-        html: pinHtml(worstOf(entries).color, String(entries.length)) });
+        html: ui.pin('var(--ts-accent)', String(entries.length), dotOf(worstOf(entries))) });
     }
   }).addTo(map);
   clusterLayer.on('clusterclick', function (ev) {
@@ -325,13 +323,15 @@ function drawArea() {
   var points = parseJson(state.projectAttrs.perimeter);
   if (areaLayer) { map.removeLayer(areaLayer); areaLayer = null; }
   if (Array.isArray(points) && points.length >= 3) {
-    areaLayer = L.polygon(points, { color: '#0277b7', weight: 2, fillOpacity: 0.06 }).addTo(map);
+    areaLayer = L.polygon(points, areaStyle()).addTo(map);
     watchArea();
   }
 }
 
+function areaStyle() { return { color: ui.markerColor(state.projectAttrs), weight: 2, fillOpacity: 0.06 }; }
+
 function watchArea() {
-  areaLayer.setStyle({ color: '#0277b7', weight: 2, fillOpacity: 0.06 });
+  areaLayer.setStyle(areaStyle());
   areaLayer.on('pm:edit', saveArea);
   areaLayer.on('pm:remove', function () { areaLayer = null; saveArea(); });
 }
@@ -353,8 +353,8 @@ function drawMarkers() {
   state.stations.forEach(function (entry) {
     if (!entry.latLng || entry.service.retired && !state.showRetired) { return; }
     var silenced = entry.service.silencedUntil;
-    var icon = L.divIcon({ className: 'ts-pin-wrap', iconSize: [22, 22], iconAnchor: [11, 11],
-      html: pinHtml(entry.status.color, '', silenced) });
+    var icon = L.divIcon({ className: 'ts-pin-wrap' + (entry.service.retired ? ' retired' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
+      html: ui.pin(entry.color, '', dotOf(entry.status), silenced) });
     var m = L.marker(entry.latLng, { icon: icon, draggable: state.editMap, keyboard: true, title: entry.station.name,
       pmIgnore: true, entry: entry });
     var stale = staleText(entry);
@@ -710,7 +710,7 @@ function projectItems() {
   return [
     { a: 'rename', label: t('common.rename', 'Rename'), run: function () { life.rename(e, cardEl.querySelector('.ts-proj-pname'), renderHeader); } },
     state.canCreateDashboards && { a: 'create-home', label: t('overview.createHome', 'Create project dashboard…'), run: function () { openCreateHome(); } },
-    state.home && state.canCreateDashboards && { a: 'home-colors', label: t('overview.homeColors', 'Station colours…'), run: openStationColors },
+    { a: 'colors', label: t('overview.colors', 'Colours…'), run: openColors },
     state.pub && state.pubDash && { a: on ? 'link-off' : 'link-on', label: on ? t('overview.linkOff', 'Public link off') : t('overview.linkOn', 'Public link on'), run: function () { setPublicLink(!on); } },
     on && { a: 'copy-link', label: t('overview.copyLink', 'Copy link'), run: copyLink },
     state.stations.length && { a: 'export', label: t('overview.export', 'Export data…'), run: openExport },
@@ -820,10 +820,43 @@ function lostHomeBanner() {
   return el;
 }
 
-function openStationColors() {
-  var names = {};
-  state.stations.forEach(function (e) { names[e.station.id] = e.station.name; });
-  templates.openStationColors({ homeId: state.home.id, title: state.home.title, names: names, done: function () {} });
+/** *Colours…*: the project's and each station's colour on the maps, a station's also on the project dashboard's charts.
+ * A station with no colour of its own starts from the project dashboard's. */
+function openColors() {
+  var e = state.entity, all = active(), was = {}, colors = {};
+  var dr = ui.openDrawer(esc(t('overview.colorsTitle', 'Colours')), esc(e.name));
+  (state.home ? templates.homeColors(state.home.id).catch(function () { return {}; }) : Promise.resolve({})).then(function (copy) {
+    was[e.id] = state.projectAttrs['config.color'];
+    colors[e.id] = ui.markerColor(state.projectAttrs);
+    all.forEach(function (s) { was[s.station.id] = s.attrs['config.color']; colors[s.station.id] = was[s.station.id] ? s.color : copy[s.station.id] || s.color; });
+    fillColors(dr, all, was, colors);
+  });
+}
+
+function fillColors(dr, all, was, colors) {
+  var e = state.entity;
+  dr.body.appendChild(h('<p class="ts-field-hint"></p>')).textContent = state.home
+    ? t('overview.colorsHintHome', 'Each marker on the maps. A station’s colour also draws its lines on the project dashboard.')
+    : t('overview.colorsHint', 'Each marker on the maps.');
+  var list = dr.body.appendChild(h('<div class="ts-home-stations"></div>'));
+  list.appendChild(templates.colorRow(e.name, colors, e.id)).setAttribute('data-project', e.name);
+  all.forEach(function (s) { list.appendChild(templates.colorRow(s.station.name, colors, s.station.id)); });
+  var go = ui.drawerActions(dr);
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    templates.saveColors([e].concat(all.map(function (s) { return s.station; })), colors, was).then(function () {
+      var mine = {};
+      all.forEach(function (s) { mine[s.station.id] = colors[s.station.id]; });
+      return state.home && state.canCreateDashboards ? templates.paintHome(state.home.id, mine) : null;
+    }).then(function () {
+      ui.closeDrawer();
+      ui.toast(t('overview.colorsSaved', 'Colours saved'));
+      return refresh();
+    }).catch(function (err) {
+      go.disabled = false;
+      ui.toast(t('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error');
+    });
+  });
 }
 
 function openAddHome(entry) {

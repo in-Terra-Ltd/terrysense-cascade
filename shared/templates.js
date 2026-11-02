@@ -311,7 +311,8 @@ root.TerrySenseTemplates = function (ui, tb) {
   var LINE_FQN = 'system.time_series_chart';
   var CHART_FQNS = [LINE_FQN, 'system.bar_chart_with_labels', 'system.state_chart'];
   var MARKER_COLOR = '#0277b7';
-  // The map's marker colour function is where a project dashboard keeps its station colours; stationColors reads them back.
+  var COLOR_KEY = 'config.color';
+  // The map's marker colour function holds the dashboard's copy of its station colours; stationColors reads it back.
   var COLORS_AT = 'var colors = ';
   var ICON_UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
   var ICON_DOWN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg>';
@@ -363,7 +364,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     return id ? ((conf.widgets[id].config.settings || {}).markers || [])[0] : null;
   }
 
-  /** A project dashboard's colour of each station, by station id; {} when its map has none. */
+  /** A project dashboard's copy of each station's colour, by station id; {} when its map has none. */
   function stationColors(conf) {
     var m = mapMarker(conf), c = m && m.markerShape && m.markerShape.color;
     var src = c && c.type === 'function' && typeof c.colorFunction === 'string' ? c.colorFunction : '';
@@ -371,6 +372,22 @@ root.TerrySenseTemplates = function (ui, tb) {
     if (at < 0) { return {}; }
     // The function stays editable in ThingsBoard, so a hand edit may no longer parse.
     try { return JSON.parse(src.slice(at + COLORS_AT.length, src.indexOf(';', at))); } catch (e) { return {}; }
+  }
+
+  /** The `config.color` of each of `entries` ([{station, attrs}]) that has one, by station id. */
+  function ownColors(entries) {
+    var out = {};
+    entries.forEach(function (e) { if (e.attrs && e.attrs[COLOR_KEY]) { out[e.station.id] = e.attrs[COLOR_KEY]; } });
+    return out;
+  }
+
+  /** Writes `colors[id]` as the `config.color` of each of `entities` whose own one, `was[id]`, differs; none reads as terrySense blue. */
+  function saveColors(entities, colors, was) {
+    return Promise.all(entities.filter(function (e) { return colors[e.id] && colors[e.id] !== (was[e.id] || MARKER_COLOR); }).map(function (e) {
+      var write = {};
+      write[COLOR_KEY] = colors[e.id];
+      return tb.saveAttrs(e, write);
+    }));
   }
 
   /** `colors` with one for each of `ids` that has none: the first palette colour no station uses yet. */
@@ -668,43 +685,28 @@ root.TerrySenseTemplates = function (ui, tb) {
         layout[w.id] = { sizeX: 24, sizeY: high, row: row, col: 0 };
         row += high;
       });
-      paintStations(conf, withColors(listedStations(conf), stationColors(conf)));
-      return tb.post('/api/dashboard', dash);
+      var own = ownColors([{ station: st, attrs: o.attrs }]);
+      var colors = withColors(listedStations(conf), Object.assign(stationColors(conf), own));
+      paintStations(conf, colors);
+      return tb.post('/api/dashboard', dash).then(function () { return saveColors([st], colors, own); });
     });
   }
 
-  /** *Station colours*: each station's colour on project dashboard `o.homeId`, its map
-   * marker and its chart lines alike. `o`: homeId, names (station names by id), done(). */
-  function openStationColors(o) {
-    var dr = ui.openDrawer(esc(root.TerrySenseT('templates.colors.title', 'Station colours')), esc(o.title || ''));
-    dr.body.appendChild(h('<div class="ts-loading"></div>')).textContent = root.TerrySenseT('templates.add.loading', 'Loading the project dashboard…');
-    tb.get('/api/dashboard/' + o.homeId).then(function (dash) {
-      var conf = dash.configuration, ids = listedStations(conf), colors = withColors(ids, stationColors(conf)), aliases = aliasStations(conf);
-      dr.body.innerHTML = '';
-      dr.body.appendChild(h('<p class="ts-field-hint"></p>')).textContent =
-        root.TerrySenseT('templates.colors.hint', 'Each station\'s marker on the map and its lines on the charts.');
-      var list = dr.body.appendChild(h('<div class="ts-home-stations"></div>'));
-      ids.forEach(function (id) {
-        var alias = Object.keys(aliases).filter(function (k) { return aliases[k] === id; })[0];
-        list.appendChild(colorRow(o.names[id] || (alias && conf.entityAliases[alias].alias) || id, colors, id));
-      });
-      var go = ui.drawerActions(dr);
-      go.addEventListener('click', function () {
-        go.disabled = true;
-        paintStations(conf, colors);
-        tb.post('/api/dashboard', dash).then(function () {
-          ui.closeDrawer();
-          ui.toast(root.TerrySenseT('templates.colors.done', 'Station colours saved'));
-          o.done();
-        }).catch(function (err) {
-          go.disabled = false;
-          ui.toast(root.TerrySenseT('common.notSaved', 'Not saved: {error}', { error: errText(err) }), 'error');
-        });
-      });
-    }).catch(function (err) {
-      dr.body.innerHTML = '';
-      dr.body.appendChild(h('<div class="ts-empty ts-error"></div>')).textContent =
-        root.TerrySenseT('templates.add.loadFailed', 'Could not load the project dashboard: {error}', { error: errText(err) });
+  /** The colour project dashboard `homeId` paints each of its stations in, by station id. */
+  function homeColors(homeId) {
+    return tb.get('/api/dashboard/' + homeId).then(function (dash) {
+      var conf = dash.configuration;
+      return withColors(listedStations(conf), stationColors(conf));
+    });
+  }
+
+  /** Repaints project dashboard `homeId` in `colors`, by station id; a station it shows that `colors` leaves out keeps its colour there. */
+  function paintHome(homeId, colors) {
+    return tb.get('/api/dashboard/' + homeId).then(function (dash) {
+      var conf = dash.configuration, ids = listedStations(conf), mine = {};
+      ids.forEach(function (id) { if (colors[id]) { mine[id] = colors[id]; } });
+      paintStations(conf, withColors(ids, Object.assign(stationColors(conf), mine)));
+      return tb.post('/api/dashboard', dash);
     });
   }
 
@@ -751,7 +753,7 @@ root.TerrySenseTemplates = function (ui, tb) {
     var all = o.entries.map(function (e) { return e.station; }), ticked = {};
     all.forEach(function (st) { ticked[st.id] = true; });
     var charts = starterPlan(cat, all.map(function (st) { return st.id; }));
-    var colors = withColors(all.map(function (st) { return st.id; }), {});
+    var own = ownColors(o.entries), colors = withColors(all.map(function (st) { return st.id; }), own);
 
     if (o.intro) { dr.body.appendChild(h('<p class="ts-field-hint ts-home-intro"></p>')).textContent = o.intro; }
     var nameField = dr.body.appendChild(h('<div class="ts-field"><label class="ts-field-label"></label><input class="ts-input wide" data-f="title"></div>'));
@@ -921,6 +923,8 @@ root.TerrySenseTemplates = function (ui, tb) {
         charts: charts.filter(function (ch) { return chartStations({ stations: stations, cat: cat }, ch).length; }) };
       go.disabled = true;
       createHome(o.project, o.owner, plan).then(function (id) {
+        return saveColors(stations, mine, own).then(function () { return id; });
+      }).then(function (id) {
         ui.closeDrawer();
         ui.toast(root.TerrySenseT('templates.home.done', '{title} created', { title: plan.title }));
         o.done(id, stations);
@@ -983,7 +987,7 @@ root.TerrySenseTemplates = function (ui, tb) {
       var go = ui.drawerActions(dr, root.TerrySenseT('common.add', 'Add'));
       go.addEventListener('click', function () {
         go.disabled = true;
-        addToHome(o.homeId, { station: o.station, cat: cat,
+        addToHome(o.homeId, { station: o.station, attrs: o.attrs, cat: cat,
           join: joins.filter(function (j) { return j.box.checked; }).map(function (j) { return j.c.id; }),
           own: own.filter(function (x) { return x.box.checked; }).map(function (x) { return x.key; }) }).then(function () {
           ui.closeDrawer();
@@ -1324,7 +1328,8 @@ root.TerrySenseTemplates = function (ui, tb) {
 
   return { CHARTS: CHARTS, chartOf: chartOf, channelsOf: channelsOf, create: create, addChannels: addChannels,
            missingFrom: missingFrom, openCreate: openCreate, openPanel: openPanel,
-           homeStations: homeStations, openCreateHome: openCreateHome, openAddToHome: openAddToHome, openStationColors: openStationColors };
+           homeStations: homeStations, openCreateHome: openCreateHome, openAddToHome: openAddToHome,
+           colorRow: colorRow, saveColors: saveColors, homeColors: homeColors, paintHome: paintHome };
 };
 
 })(typeof self !== 'undefined' ? self : this);
