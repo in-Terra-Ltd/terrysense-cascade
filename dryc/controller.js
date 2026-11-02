@@ -1,7 +1,8 @@
 /*
  * DRYC — the dry contact interface of a station: the inputs wired on site and
  * the relays, the rules on them, and the rules sent to the device (CA-5).
- * Bound to a STATION; its device is the LOGR2 or LOGR4 it contains. Model:
+ * Bound to a STATION; its device is the LOGR2 or LOGR4 it contains that reports
+ * a DRYC, a station also holding a logger without one. Model:
  * logr-product-docs/cloud/DRYC.md. View: logr-product-docs/cloud/FRONTEND.md
  * *Dry contact interface view*.
  *
@@ -336,11 +337,34 @@ function stationsOf(deviceId) {
   });
 }
 
-/** The station's LOGR2 or LOGR4, else null. */
+/** Whether the logger reports a DRYC: its readings, or a DRYC in its bus topology. */
+function hasDryc(device) {
+  var ref = { entityType: 'DEVICE', id: device.id.id };
+  return Promise.all([
+    tb.get('/api/plugins/telemetry/DEVICE/' + ref.id + '/keys/timeseries').catch(function () { return []; }),
+    tb.attrsMap(ref, 'CLIENT_SCOPE')
+  ]).then(function (got) {
+    return (got[0] || []).some(function (k) { return /^(dryc|p\d+)\.dryc/.test(k); })
+      || Object.keys(got[1]).some(function (k) { return /^topology\.p\d+\.type$/.test(k) && /^dryc/.test(String(got[1][k])); });
+  });
+}
+
+/** The station's logger with a DRYC; among several, the one its DRYC channels name.
+ * With none reporting one yet, the station's only or first logger. */
 function findDevice(station) {
-  return devicesOf(station.id).then(function (ids) {
-    return Promise.all(ids.map(function (id) { return tb.get('/api/device/' + id); }));
-  }).then(function (devices) { return devices.filter(function (d) { return DEVICE_TYPES.indexOf(String(d.type).toLowerCase()) >= 0; })[0] || null; });
+  return Promise.all([devicesOf(station.id), tb.attrsMap(station)]).then(function (got) {
+    var entries = resolver.mapEntries(got[1]['config.channelMap']);
+    var mapped = Object.keys(entries).filter(function (c) { return DRYC_SOURCE.test(entries[c].key) || /^drycRule\./.test(entries[c].key); })
+      .map(function (c) { return entries[c].device; });
+    return Promise.all(got[0].map(function (id) { return tb.get('/api/device/' + id); })).then(function (devices) {
+      var loggers = devices.filter(function (d) { return DEVICE_TYPES.indexOf(String(d.type).toLowerCase()) >= 0; });
+      return Promise.all(loggers.map(hasDryc)).then(function (flags) {
+        var dryc = loggers.filter(function (d, i) { return flags[i]; });
+        var named = dryc.filter(function (d) { return mapped.indexOf(d.id.id) >= 0; });
+        return named[0] || dryc[0] || loggers[0] || null;
+      });
+    });
+  });
 }
 
 /** The station's rules, and its device's state and the other stations holding rules for it. */
