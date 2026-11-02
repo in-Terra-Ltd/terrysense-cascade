@@ -939,6 +939,28 @@ function swapped(c, target, hasSms, hasEmail) {
   return Object.assign(target, { viaSms: viaSms, viaEmail: viaEmail, severities: (c.severities || []).slice() });
 }
 
+/** A pick list of contacts `{key, name, desc, attr}`, the external ones first, under `opts.group` when given. */
+function contactList(opts) {
+  return ui.pickList({
+    key: function (x) { return x.key; },
+    text: function (x) { return x.name + ' ' + x.desc; },
+    placeholder: opts.placeholder,
+    empty: opts.empty,
+    sorts: [{ id: 'name', label: t('common.name', 'Name'), group: opts.group, compare: function (a, b) {
+      return (a.key[0] === b.key[0] ? 0 : a.key[0] === 'b' ? -1 : 1) || a.name.localeCompare(b.name);
+    } }],
+    option: function (x) {
+      var o = h('<div class="ts-opt" tabindex="0"><span class="ts-avatar"></span><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div></div>');
+      if (x.attr) { o.setAttribute(x.attr[0], x.attr[1]); }
+      o.querySelector('.ts-avatar').textContent = initials(x.name);
+      o.querySelector('.ts-opt-label').textContent = x.name;
+      o.querySelector('.ts-opt-desc').textContent = x.desc;
+      return o;
+    },
+    onPick: opts.onPick
+  });
+}
+
 /** *Replace with…* of an external contact (`type` `book`) or a platform user (`user`). */
 function openReplace(id, type) {
   type = type || 'book';
@@ -952,30 +974,22 @@ function openReplace(id, type) {
         null, rewritesFor(uses, function (list) { return replaceIn(list, match, make); }), uses, null, true,
         reportRefs(match, make({ severities: [] })));
     }
-    function option(label, desc, attr, value, onPick) {
-      var o = h('<div class="ts-opt" tabindex="0"><span class="ts-avatar"></span><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div></div>');
-      o.setAttribute(attr, value);
-      o.querySelector('.ts-avatar').textContent = initials(label);
-      o.querySelector('.ts-opt-label').textContent = label;
-      o.querySelector('.ts-opt-desc').textContent = desc;
-      o.addEventListener('click', onPick);
-      dr.body.appendChild(o);
-    }
-    var others = Object.keys(state.book.entries).filter(function (k) { return type !== 'book' || k !== id; });
-    if (others.length) { dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.externalContacts', 'External contacts')) + '</div>')); }
-    others.forEach(function (k) {
+    var candidates = Object.keys(state.book.entries).filter(function (k) { return type !== 'book' || k !== id; }).map(function (k) {
       var e = state.book.entries[k];
-      option(entryName(e), [e.sms, e.email].filter(Boolean).join(' · '), 'data-entry', k, function () {
-        pick(entryName(e), function (c) { return swapped(c, { type: 'book', entryId: k }, !!e.sms, !!e.email); });
-      });
+      return { key: 'b:' + k, attr: ['data-entry', k], name: entryName(e), desc: [e.sms, e.email].filter(Boolean).join(' · '),
+               make: function (c) { return swapped(c, { type: 'book', entryId: k }, !!e.sms, !!e.email); } };
+    }).concat((state.users || []).filter(function (u) { return type !== 'user' || u.id.id !== id; }).map(function (u) {
+      return { key: 'u:' + u.id.id, attr: ['data-user', u.id.id], name: userName(u), desc: u.email + (u.phone ? ' · ' + u.phone : t('settings.noPhone', ' · no phone')),
+               make: function (c) { return swapped(c, { type: 'user', userId: u.id.id }, !!u.phone, !!u.email); } };
+    }));
+    var list = contactList({
+      placeholder: t('settings.searchContacts', 'Name, phone, email'),
+      empty: t('settings.nothingToReplace', 'No other entry and no platform user to replace it with.'),
+      group: function (x) { return x.attr[0] === 'data-entry' ? t('settings.externalContacts', 'External contacts') : t('settings.platformUsers', 'Platform users'); },
+      onPick: function (x) { pick(x.name, x.make); }
     });
-    if ((state.users || []).length) { dr.body.appendChild(h('<div class="ts-subhead">' + esc(t('settings.platformUsers', 'Platform users')) + '</div>')); }
-    (state.users || []).filter(function (u) { return type !== 'user' || u.id.id !== id; }).forEach(function (u) {
-      option(userName(u), u.email + (u.phone ? ' · ' + u.phone : t('settings.noPhone', ' · no phone')), 'data-user', u.id.id, function () {
-        pick(userName(u), function (c) { return swapped(c, { type: 'user', userId: u.id.id }, !!u.phone, !!u.email); });
-      });
-    });
-    if (!dr.body.children.length) { dr.body.appendChild(h('<div class="ts-empty">' + esc(t('settings.nothingToReplace', 'No other entry and no platform user to replace it with.')) + '</div>')); }
+    dr.body.appendChild(list.el);
+    list.set(candidates);
   });
 }
 
@@ -1990,9 +2004,6 @@ function contactsEditor(initial, set, setValid) {
 
     if (picking) {
       var taken = people.map(contactKey);
-      var pick = h('<div class="ts-user-pick"><div class="ts-search">' + ICON.search + '<input class="ts-input"></div><div></div></div>');
-      var q = pick.querySelector('input'), ul = pick.lastChild;
-      q.placeholder = picking === 'user' ? t('settings.searchUsers', 'Search users') : t('settings.searchExternal', 'Search external contacts');
       var candidates = picking === 'user'
         ? (state.users || []).map(function (u) {
           return { key: 'u:' + u.id.id, name: userName(u), desc: u.email + (u.phone ? ' · ' + u.phone : t('settings.noPhone', ' · no phone')),
@@ -2003,29 +2014,18 @@ function contactsEditor(initial, set, setValid) {
           return { key: 'b:' + id, name: entryName(b), desc: [b.sms, b.email].filter(Boolean).join(' · '),
                    contact: { type: 'book', entryId: id, viaSms: !!b.sms, viaEmail: !!b.email } };
         });
-      var fill = function () {
-        ul.innerHTML = '';
-        candidates.filter(function (x) {
-          return taken.indexOf(x.key) < 0 && (x.name + ' ' + x.desc).toLowerCase().indexOf(q.value.toLowerCase()) >= 0;
-        }).forEach(function (x) {
-          var o = h('<div class="ts-opt" tabindex="0"><span class="ts-avatar"></span><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div></div>');
-          o.setAttribute('data-pick', x.key);
-          o.querySelector('.ts-avatar').textContent = initials(x.name);
-          o.querySelector('.ts-opt-label').textContent = x.name;
-          o.querySelector('.ts-opt-desc').textContent = x.desc;
-          o.addEventListener('click', function () {
-            people.push(Object.assign({ severities: allSev() }, x.contact));
-            picking = null; commitPeople(); render();
-          });
-          ul.appendChild(o);
-        });
-        if (!ul.children.length) { ul.appendChild(h('<div class="ts-empty">' + (picking === 'user' ? esc(t('settings.noOtherUser', 'No other user.')) : Object.keys(state.book.entries).length
-          ? esc(t('settings.noOtherExternal', 'No other external contact.')) : t('settings.noExternalYet', 'No external contact yet: <i>New external contact</i> adds one.')) + '</div>')); }
-      };
-      q.addEventListener('input', fill);
-      fill();
-      box.appendChild(pick);
-      setTimeout(function () { q.focus(); }, 0);
+      var pick = contactList({
+        placeholder: picking === 'user' ? t('settings.searchUsers', 'Search users') : t('settings.searchExternal', 'Search external contacts'),
+        empty: picking === 'user' ? t('settings.noOtherUser', 'No other user.') : Object.keys(state.book.entries).length
+          ? t('settings.noOtherExternal', 'No other external contact.') : t('settings.noExternalYet', 'No external contact yet: New external contact adds one.'),
+        onPick: function (x) {
+          people.push(Object.assign({ severities: allSev() }, x.contact));
+          picking = null; commitPeople(); render();
+        }
+      });
+      pick.el.classList.add('ts-user-pick');
+      pick.set(candidates.filter(function (x) { return taken.indexOf(x.key) < 0; }));
+      box.appendChild(pick.el);
     }
 
     var add = h('<div class="ts-add-row"><button type="button" class="ts-btn ghost" data-a="user">' + ICON.plus + esc(t('settings.platformUser', 'Platform user')) + '</button>' +

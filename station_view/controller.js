@@ -971,56 +971,62 @@ function renderRules() {
 function connectDrawer() {
   var dr = ui.openDrawer(t('station.connect', 'Connect a device'), esc(state.station.name));
   var hint = dr.body.appendChild(h('<div class="ts-field-hint"></div>'));
-  var only = dr.body.appendChild(h('<label class="ts-switch" hidden><input type="checkbox" data-f="fits" checked> <span>' + esc(t('station.onlyFitting', 'Only devices that fit its dashboard')) + '</span></label>'));
-  var list = dr.body.appendChild(h('<div data-f="devices"><div class="ts-loading">' + esc(t('common.loading', 'Loading…')) + '</div></div>'));
-  var owner = state.owner, dashId = state.attrs['config.stationDashboard'];
+  var owner = state.owner, dashId = state.attrs['config.stationDashboard'], kinds = [];
+  function heard(x) { return Number(x.attrs.lastActivityTime) || 0; }
+  function byName(a, b) { return (a.device.label || a.device.name).localeCompare(b.device.label || b.device.name); }
+  var pick = ui.pickList({
+    key: function (x) { return x.device.name; },
+    text: function (x) { return [x.device.name, x.device.label, x.device.type].concat(x.feeds).join(' '); },
+    placeholder: t('common.searchDevices', 'Name, label, type, station'),
+    filters: [
+      { id: 'fits', label: t('station.onlyFitting', 'Only devices that fit its dashboard'), on: true, test: function (x) { return x.fit.fits; } },
+      { id: 'free', label: t('common.onlyFree', 'Only devices feeding no station'), on: false, test: function (x) { return !x.feeds.length; } }
+    ],
+    sorts: [
+      { id: 'fit', label: t('station.sortFit', 'Best fit'), compare: function (a, b) { return b.fit.fits - a.fit.fits || !!a.feeds.length - !!b.feeds.length || byName(a, b); } },
+      { id: 'uplink', label: t('common.lastUplink', 'Last uplink'), compare: function (a, b) { return heard(b) - heard(a) || byName(a, b); } },
+      { id: 'name', label: t('common.name', 'Name'), compare: byName }
+    ],
+    empty: t('station.noOwnerDevice', 'No device of this owner.'),
+    option: function (x) {
+      var d = x.device;
+      var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div><div class="ts-opt-side"></div></div>');
+      o.setAttribute('data-device', d.name);
+      o.querySelector('.ts-opt-label').textContent = (d.label || d.name) + ' (' + d.type + ')';
+      o.querySelector('.ts-opt-desc').textContent = [d.label ? d.name : '', x.feeds.length ? t('common.feeding', 'Feeding {stations}', { stations: x.feeds.join(', ') }) : t('common.free', 'Free'),
+        heard(x) ? t('device.lastUplinkAgo', 'last uplink {ago}', { ago: t.ago(heard(x)) }) : t('common.neverHeard', 'Never heard from')].filter(Boolean).join(' · ');
+      if (kinds.length) {
+        o.querySelector('.ts-opt-side').appendChild(h('<span class="ts-chip' + (x.fit.fits ? ' accent' : '') + '"></span>')).textContent =
+          x.fit.fits ? t('station.fits', 'Fits the dashboard') : t('station.measures', 'Measures {have} of {total}', { have: x.fit.have.length, total: kinds.length });
+      }
+      return o;
+    },
+    onPick: function (x) {
+      ui.closeDrawer();
+      tb.openDashboard(opts.devicesDashboardId, 'device', { entityType: 'DEVICE', id: x.device.id.id, name: x.device.name },
+        { connectTo: { id: state.station.id, name: state.station.name } });
+    }
+  });
+  dr.body.appendChild(pick.el);
   var url = owner.entityType === 'CUSTOMER' ? '/api/customer/' + owner.id + '/devices' : '/api/tenant/devices';
   Promise.all([tb.getAll(url, {}), dashId ? tb.get('/api/dashboard/' + dashId).catch(function () { return null; }) : null]).then(function (got) {
-    var kinds = got[1] ? resolver.channelKinds(resolver.dashboardChannels(got[1]), state.names) : [];
+    kinds = got[1] ? resolver.channelKinds(resolver.dashboardChannels(got[1]), state.names) : [];
+    hint.textContent = kinds.length
+      ? t('station.connectHint', 'Its dashboard {title} shows {kinds}. The device view then opens to choose what the station stores.',
+        { title: got[1].title, kinds: kinds.map(kindLabel).join(', ') })
+      : t('station.connectHintPlain', 'The device view opens to choose what the station stores.');
     var devices = got[0].filter(function (d) { return d.ownerId.id === owner.id; });
     return Promise.all(devices.map(function (d) {
+      var entity = { entityType: 'DEVICE', id: d.id.id };
       return Promise.all([tb.get('/api/plugins/telemetry/DEVICE/' + d.id.id + '/keys/timeseries').catch(function () { return []; }),
-        tb.deviceParents({ id: d.id.id })]).then(function (r) {
-        return { device: d, fit: resolver.deviceFit(tb.readingKeys(r[0]), kinds, state.names), feeds: r[1].map(function (p) { return p.name; }).sort() };
+        tb.deviceParents(entity), tb.attrsMap(entity)]).then(function (r) {
+        return { device: d, fit: resolver.deviceFit(tb.readingKeys(r[0]), kinds, state.names), feeds: r[1].map(function (p) { return p.name; }).sort(), attrs: r[2] };
       });
-    })).then(function (rows) { return { rows: rows, kinds: kinds, dashboard: got[1] }; });
-  }).then(function (r) {
-    hint.textContent = r.kinds.length
-      ? t('station.connectHint', 'Its dashboard {title} shows {kinds}. The device view then opens to choose what the station stores.',
-        { title: r.dashboard.title, kinds: r.kinds.map(kindLabel).join(', ') })
-      : t('station.connectHintPlain', 'The device view opens to choose what the station stores.');
-    var fitting = r.rows.filter(function (x) { return x.fit.fits; });
-    only.hidden = !fitting.length;
-    r.rows.sort(function (a, b) {
-      return b.fit.fits - a.fit.fits || !!a.feeds.length - !!b.feeds.length || a.device.name.localeCompare(b.device.name);
-    });
-    function fill() {
-      list.innerHTML = '';
-      var shown = r.rows.filter(function (x) { return only.hidden || !only.querySelector('input').checked || x.fit.fits; });
-      shown.forEach(function (x) {
-        var d = x.device;
-        var o = list.appendChild(h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div>' +
-          '<div class="ts-opt-side"></div></div>'));
-        o.setAttribute('data-device', d.name);
-        o.querySelector('.ts-opt-label').textContent = (d.label || d.name) + ' (' + d.type + ')';
-        o.querySelector('.ts-opt-desc').textContent = (d.label ? d.name + ' · ' : '') + (x.feeds.length ? t('common.feeding', 'Feeding {stations}', { stations: x.feeds.join(', ') }) : t('common.free', 'Free'));
-        if (r.kinds.length) {
-          o.querySelector('.ts-opt-side').appendChild(h('<span class="ts-chip' + (x.fit.fits ? ' accent' : '') + '"></span>')).textContent =
-            x.fit.fits ? t('station.fits', 'Fits the dashboard') : t('station.measures', 'Measures {have} of {total}', { have: x.fit.have.length, total: r.kinds.length });
-        }
-        var go = function () {
-          ui.closeDrawer();
-          tb.openDashboard(opts.devicesDashboardId, 'device', { entityType: 'DEVICE', id: d.id.id, name: d.name },
-            { connectTo: { id: state.station.id, name: state.station.name } });
-        };
-        o.addEventListener('click', go);
-        o.addEventListener('keydown', function (e) { if (e.key === 'Enter') { go(); } });
-      });
-      if (!shown.length) { list.appendChild(h('<div class="ts-empty">' + esc(t('station.noOwnerDevice', 'No device of this owner.')) + '</div>')); }
-    }
-    only.querySelector('input').addEventListener('change', fill);
-    fill();
-  }).catch(function (err) { list.innerHTML = ''; list.appendChild(h('<div class="ts-empty"></div>')).textContent = t('station.listFailed', 'Could not list the devices: {error}', { error: errText(err) }); });
+    }));
+  }).then(pick.set).catch(function (err) {
+    pick.el.innerHTML = '';
+    pick.el.appendChild(h('<div class="ts-empty"></div>')).textContent = t('station.listFailed', 'Could not list the devices: {error}', { error: errText(err) });
+  });
 }
 
 // -- load -------------------------------------------------------------------------------

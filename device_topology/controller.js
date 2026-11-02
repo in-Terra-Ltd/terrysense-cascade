@@ -432,6 +432,73 @@ function stationsToPick() {
   return owner.entityType === 'CUSTOMER' ? tb.io.fetchCustomerStations({ id: owner.id }) : tb.io.fetchAllStations();
 }
 
+/** `stations`, each with the name of its `project` among `projects` and the count of `devices` it contains. */
+function stationChoices(stations, projects) {
+  var projectOf = {};
+  return Promise.all(projects.map(function (p) {
+    return tb.post('/api/relations', {
+      parameters: { rootId: p.id, rootType: 'ASSET', direction: 'FROM', relationTypeGroup: 'COMMON', maxLevel: 1, fetchLastLevelOnly: false },
+      filters: [{ relationType: 'Contains', entityTypes: ['ASSET'] }]
+    }).then(function (rels) { (rels || []).forEach(function (r) { projectOf[r.to.id] = p.name; }); }).catch(function () {});
+  })).then(function () {
+    return Promise.all(stations.map(function (s) {
+      return tb.containedDevices(s).catch(function () { return []; }).then(function (devices) {
+        return Object.assign({ project: projectOf[s.id] || '', devices: devices.length }, s);
+      });
+    }));
+  });
+}
+
+/** The station field of the connect panel: the owner's stations by project, *New station…* above them. */
+function stationPicker() {
+  function byName(a, b) { return a.name.localeCompare(b.name); }
+  var none = t('nav.noProject', 'On no project');
+  var f = ui.pickField({
+    none: t('device.pickStation', 'Pick a station'),
+    top: [{ key: NEW_STATION, label: t('device.newStation', 'New station…') }],
+    key: function (s) { return s.id; },
+    name: function (s) { return s.name; },
+    text: function (s) { return s.name + ' ' + s.key + ' ' + s.project; },
+    placeholder: t('device.searchStations', 'Station or project'),
+    filters: [{ id: 'empty', label: t('device.onlyEmpty', 'Only stations with no device yet'), on: false, test: function (s) { return !s.devices; } }],
+    sorts: [
+      { id: 'project', label: t('common.project', 'Project'), compare: function (a, b) { return !a.project - !b.project || a.project.localeCompare(b.project) || byName(a, b); },
+        group: function (s) { return s.project || none; } },
+      { id: 'name', label: t('common.name', 'Name'), compare: byName }
+    ],
+    empty: t('device.noStationToPick', 'No other station of this owner: New station… creates one.'),
+    option: function (s) {
+      var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div><div class="ts-opt-side"></div></div>');
+      o.querySelector('.ts-opt-label').textContent = s.name;
+      o.querySelector('.ts-opt-desc').textContent = s.project || none;
+      var side = o.querySelector('.ts-opt-side');
+      if (!s.devices) { side.appendChild(ui.stateChip('nodevice')); } else {
+        side.appendChild(h('<span class="ts-chip"></span>')).textContent = s.devices === 1 ? t('fleet.devicesOne', '1 device') : t('fleet.devicesMany', '{n} devices', { n: s.devices });
+      }
+      return o;
+    }
+  });
+  f.el.setAttribute('data-f', 'station');
+  return f;
+}
+
+/** A field picking one of the owner's projects, `top` rows above them. */
+function projectField(none, top) {
+  return ui.pickField({
+    none: none,
+    top: top,
+    key: function (p) { return p.id; },
+    name: function (p) { return p.name; },
+    text: function (p) { return p.name + ' ' + p.key; },
+    placeholder: t('common.project', 'Project'),
+    option: function (p) {
+      var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>');
+      o.querySelector('.ts-opt-label').textContent = p.name;
+      return o;
+    }
+  });
+}
+
 /** Where a new station can go: the projects of the device's owner. */
 function parentsToPick() {
   var owner = ownerOf().id;
@@ -461,45 +528,39 @@ function bindDrawer(binding, preset) {
   var hint = stationField.querySelector('[data-f=hint]');
   var newFields = h('<div data-f="new" hidden><div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.newStationName', 'Name of the new station')) + '</span></div>' +
     '<div class="ts-ctl"><input class="ts-input wide" type="text" data-f="newName"></div></div>' +
-    '<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.newStationIn', 'In')) + '</span></div><div class="ts-ctl">' +
-    '<select class="ts-select wide" data-f="parent"><option value="">' + esc(t('device.pickProject', 'Pick a project')) + '</option>' +
-    '<option value="' + NEW_PROJECT + '">' + esc(t('device.newProject', 'New project…')) + '</option></select></div></div>' +
+    '<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.newStationIn', 'In')) + '</span></div><div class="ts-ctl" data-f="parentCtl">' +
+    '</div></div>' +
     '<div class="ts-field" data-f="newProject" hidden><div class="ts-field-label"><span>' + esc(t('device.newProjectName', 'Name of the new project')) + '</span></div>' +
     '<div class="ts-ctl"><input class="ts-input wide" type="text" data-f="newProjectName"></div></div></div>');
-  newFields.querySelector('[data-f=parent]').addEventListener('change', function (ev) {
-    newFields.querySelector('[data-f=newProject]').hidden = ev.target.value !== NEW_PROJECT;
+  var parentPick = projectField(t('device.pickProject', 'Pick a project'), [{ key: NEW_PROJECT, label: t('device.newProject', 'New project…') }]);
+  parentPick.el.setAttribute('data-f', 'parent');
+  newFields.querySelector('[data-f=parentCtl]').appendChild(parentPick.el);
+  parentPick.el.addEventListener('change', function () {
+    newFields.querySelector('[data-f=newProject]').hidden = parentPick.value().key !== NEW_PROJECT;
   });
-  var parents = [];
+  var stationPick = null;
   if (binding) {
     stationField.querySelector('.ts-ctl').appendChild(h('<b></b>')).textContent = binding.station.name;
   } else {
-    var sel = h('<select class="ts-select wide" data-f="station"><option value="">' + esc(t('device.pickStation', 'Pick a station')) + '</option>' +
-      '<option value="' + NEW_STATION + '">' + esc(t('device.newStation', 'New station…')) + '</option></select>');
-    stationField.querySelector('.ts-ctl').appendChild(sel);
-    stationsToPick().then(function (list) {
-      var bound = {};
-      state.bindings.forEach(function (b) { bound[b.station.id] = true; });
-      list.filter(function (s) { return !bound[s.id]; }).sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (s) {
-        var o = document.createElement('option'); o.value = s.id; o.textContent = s.name; o.dataset.name = s.name; sel.appendChild(o);
-      });
-      if (!preset) { return; }
-      if (!sel.querySelector('option[value="' + preset.id + '"]')) { ui.toast(t('device.cannotTake', '{station} cannot take this device', { station: preset.name }), 'error'); return; }
-      sel.value = preset.id;
-      sel.dispatchEvent(new Event('change'));
-    });
+    stationPick = stationPicker();
+    stationField.querySelector('.ts-ctl').appendChild(stationPick.el);
     parentsToPick().then(function (list) {
-      parents = list;
-      var psel = newFields.querySelector('[data-f=parent]'), fresh = psel.querySelector('option[value="' + NEW_PROJECT + '"]');
-      list.forEach(function (p) {
-        var o = document.createElement('option'); o.value = p.id; o.textContent = p.name; psel.insertBefore(o, fresh);
-      });
+      parentPick.set(list);
       // A customer with no project yet creates its first one here (CA-6).
-      if (!list.length) { psel.value = NEW_PROJECT; psel.dispatchEvent(new Event('change')); }
+      if (!list.length) { parentPick.pick(NEW_PROJECT); }
+      return stationsToPick().then(function (stations) {
+        var bound = {};
+        state.bindings.forEach(function (b) { bound[b.station.id] = true; });
+        return stationChoices(stations.filter(function (s) { return !bound[s.id]; }), list);
+      });
+    }).then(function (choices) {
+      stationPick.set(choices);
+      if (preset && !stationPick.pick(preset.id)) { ui.toast(t('device.cannotTake', '{station} cannot take this device', { station: preset.name }), 'error'); }
     });
-    sel.addEventListener('change', function () {
-      var creating = sel.value === NEW_STATION;
+    stationPick.el.addEventListener('change', function () {
+      var s = stationPick.value(), creating = s.key === NEW_STATION;
       newFields.hidden = !creating;
-      picked = sel.value && !creating ? { entityType: 'ASSET', id: sel.value, name: sel.selectedOptions[0].dataset.name, kind: 'Station' } : null;
+      picked = creating ? null : { entityType: 'ASSET', id: s.id, name: s.name, kind: 'Station' };
       pickedEntries = null;
       hint.textContent = '';
       tick(null);
@@ -614,12 +675,11 @@ function bindDrawer(binding, preset) {
   ui.drawerActions(dr, t('common.save', 'Save')).addEventListener('click', function () {
     var chosen = chosenRows();
     if (!chosen.length) { ui.toast(t('device.pickMeasurement', 'Pick at least one measurement'), 'error'); return; }
-    if (!binding && sel.value === NEW_STATION) {
-      var name = newFields.querySelector('[data-f=newName]').value.trim(), where = newFields.querySelector('[data-f=parent]').value;
-      var projectName = newFields.querySelector('[data-f=newProjectName]').value.trim();
-      var parent = parents.filter(function (p) { return p.id === where; })[0];
-      if (!name || (where === NEW_PROJECT ? !projectName : !parent)) { ui.toast(t('device.nameNewStation', 'Name the new station and pick where it goes'), 'error'); return; }
-      save(null, {}, chosen, { name: name, parent: where === NEW_PROJECT ? { name: projectName, fresh: true } : parent });
+    if (stationPick && (stationPick.value() || {}).key === NEW_STATION) {
+      var name = newFields.querySelector('[data-f=newName]').value.trim(), parent = parentPick.value();
+      var projectName = newFields.querySelector('[data-f=newProjectName]').value.trim(), fresh = !!parent && parent.key === NEW_PROJECT;
+      if (!name || !parent || (fresh && !projectName)) { ui.toast(t('device.nameNewStation', 'Name the new station and pick where it goes'), 'error'); return; }
+      save(null, {}, chosen, { name: name, parent: fresh ? { name: projectName, fresh: true } : parent });
       return;
     }
     if (!picked) { ui.toast(t('device.pickStation', 'Pick a station'), 'error'); return; }
@@ -888,21 +948,54 @@ function carryRows() {
   return rows;
 }
 
+/** The replacement field: the owner's other devices, the free ones first, then each under the stations it feeds. */
+function replacementPicker() {
+  function byName(a, b) { return a.name.localeCompare(b.name); }
+  var f = ui.pickField({
+    none: t('device.pickDevice', 'Pick a device'),
+    key: function (d) { return d.id.id; },
+    name: function (d) { return d.name + (d.label ? ' · ' + d.label : ''); },
+    text: function (d) { return [d.name, d.label, d.type, d.feeds].join(' '); },
+    placeholder: t('common.searchDevices', 'Name, label, type, station'),
+    filters: [
+      { id: 'same', label: t('device.onlySameType', 'Only {type} devices', { type: state.device.type }), on: false, test: function (d) { return d.type === state.device.type; } },
+      { id: 'free', label: t('common.onlyFree', 'Only devices feeding no station'), on: false, test: function (d) { return !d.feeds; } }
+    ],
+    sorts: [
+      { id: 'free', label: t('device.sortFree', 'Free first'), compare: function (a, b) { return !!a.feeds - !!b.feeds || a.feeds.localeCompare(b.feeds) || byName(a, b); },
+        group: function (d) { return d.feeds ? t('common.feeding', 'Feeding {stations}', { stations: d.feeds }) : t('common.free', 'Free'); } },
+      { id: 'uplink', label: t('common.lastUplink', 'Last uplink'), compare: function (a, b) { return b.heard - a.heard || byName(a, b); } },
+      { id: 'name', label: t('common.name', 'Name'), compare: byName }
+    ],
+    empty: t('device.noOtherDevice', 'The owner has no other device.'),
+    option: function (d) {
+      var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div><div class="ts-opt-desc"></div></div></div>');
+      o.querySelector('.ts-opt-label').textContent = d.name + (d.label ? ' · ' + d.label : '') + ' (' + d.type + ')';
+      o.querySelector('.ts-opt-desc').textContent = (d.feeds ? t('common.feeding', 'Feeding {stations}', { stations: d.feeds }) : t('common.free', 'Free')) + ' · ' +
+        (d.heard ? t('device.lastUplinkAgo', 'last uplink {ago}', { ago: t.ago(d.heard) }) : t('common.neverHeard', 'Never heard from'));
+      return o;
+    }
+  });
+  f.el.setAttribute('data-f', 'device');
+  return f;
+}
+
 /** Replace this device by another of the same owner, in one save: each channel
  * it feeds moves to a source key of the replacement — the same key when it has
  * it, else one of the same kind — and a channel left unmatched leaves its
  * station, which keeps its history. This device keeps its own. */
 function replaceDrawer() {
-  var me = state.device.id.id, owner = ownerOf(), bound = replaceable(), candidates = {};
+  var me = state.device.id.id, owner = ownerOf(), bound = replaceable();
   var dr = ui.openDrawer(t('device.replaceTitle', 'Replace device'), esc(state.device.label || state.device.name));
   dr.el.classList.add('wide');
   var field = dr.body.appendChild(h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.replacement', 'Replacement')) + '</span></div>' +
-    '<div class="ts-ctl"><select class="ts-select wide" data-f="device"><option value="">' + esc(t('device.pickDevice', 'Pick a device')) + '</option></select></div>' +
+    '<div class="ts-ctl"></div>' +
     '<div class="ts-field-hint"></div></div>'));
   field.querySelector('.ts-field-hint').textContent = bound.length
     ? t('device.replaceHintFed', 'Every channel this device feeds moves to the replacement; each station keeps its history, this device keeps its own.')
     : t('device.replaceHintFree', 'This device feeds no station: the replacement takes over what is ticked below.');
-  var sel = field.querySelector('select');
+  var sel = replacementPicker();
+  field.querySelector('.ts-ctl').appendChild(sel.el);
   var table = dr.body.appendChild(h('<div class="ts-binds" data-f="match"></div>'));
   var unmatched = dr.body.appendChild(h('<div class="ts-field-hint" data-f="unmatched"></div>'));
   var rows = carryRows();
@@ -915,31 +1008,17 @@ function replaceDrawer() {
     });
   }
 
-  // The owner's devices, the free ones first, then each under the stations it feeds.
   var url = owner.entityType === 'CUSTOMER' ? '/api/customer/' + owner.id + '/devices' : '/api/tenant/devices';
   tb.getAll(url, {}).then(function (list) {
     return Promise.all(list.filter(function (d) { return d.id.id !== me && d.ownerId.id === owner.id; }).map(function (d) {
-      return tb.deviceParents({ id: d.id.id }).then(function (parents) {
-        d.feeds = parents.map(function (p) { return p.name; }).sort().join(', ');
+      var entity = { entityType: 'DEVICE', id: d.id.id };
+      return Promise.all([tb.deviceParents(entity), tb.attrsMap(entity)]).then(function (got) {
+        d.feeds = got[0].map(function (p) { return p.name; }).sort().join(', ');
+        d.heard = Number(got[1].lastActivityTime) || 0;
         return d;
       });
     }));
-  }).then(function (list) {
-    var groups = {};
-    list.sort(function (a, b) { return a.name.localeCompare(b.name); }).forEach(function (d) {
-      candidates[d.id.id] = d;
-      (groups[d.feeds] = groups[d.feeds] || []).push(d);
-    });
-    Object.keys(groups).sort(function (a, b) { return !!a - !!b || a.localeCompare(b); }).forEach(function (feeds) {
-      var group = sel.appendChild(document.createElement('optgroup'));
-      group.label = feeds ? t('common.feeding', 'Feeding {stations}', { stations: feeds }) : t('common.free', 'Free');
-      groups[feeds].forEach(function (d) {
-        var o = group.appendChild(document.createElement('option'));
-        o.value = d.id.id;
-        o.textContent = d.name + (d.label ? ' · ' + d.label : '') + ' (' + d.type + ')';
-      });
-    });
-  });
+  }).then(sel.set);
 
   function showUnmatched() {
     var left = Array.prototype.filter.call(table.querySelectorAll('select[data-station]'), function (p) { return !p.value; });
@@ -947,11 +1026,10 @@ function replaceDrawer() {
   }
   table.addEventListener('change', showUnmatched);
 
-  sel.addEventListener('change', function () {
+  sel.el.addEventListener('change', function () {
     table.innerHTML = '';
     unmatched.textContent = '';
-    var d = candidates[sel.value];
-    if (!d) { return; }
+    var d = sel.value();
     Promise.all([
       tb.get('/api/plugins/telemetry/DEVICE/' + d.id.id + '/keys/timeseries').catch(function () { return []; }),
       tb.attrsMap({ entityType: 'DEVICE', id: d.id.id }, 'CLIENT_SCOPE')
@@ -996,7 +1074,7 @@ function replaceDrawer() {
   });
 
   ui.drawerActions(dr, t('device.replace', 'Replace')).addEventListener('click', function () {
-    var d = candidates[sel.value];
+    var d = sel.value();
     if (!d) { ui.toast(t('device.pickReplacement', 'Pick the replacement'), 'error'); return; }
     var target = { entityType: 'DEVICE', id: d.id.id, name: d.name, label: d.label, kind: d.type };
     var picks = Array.prototype.slice.call(table.querySelectorAll('select[data-station]'));

@@ -66,21 +66,32 @@ root.TerrySenseLifecycle = function (ui, tb) {
     }).join('') + '</ul>';
   }
 
+  /** A pick list of named entries, each row carrying its name in `attr`; one flagged `first` heads it. */
+  function namedList(attr, placeholder, empty, onPick) {
+    return ui.pickList({
+      key: function (x) { return x.id; },
+      text: function (x) { return x.name; },
+      placeholder: placeholder,
+      empty: empty,
+      sorts: [{ id: 'name', label: t('common.name', 'Name'), compare: function (a, b) { return !!b.first - !!a.first || a.name.localeCompare(b.name); } }],
+      option: function (x) {
+        var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>');
+        o.setAttribute(attr, x.name);
+        o.querySelector('.ts-opt-label').textContent = x.name;
+        return o;
+      },
+      onPick: onPick
+    });
+  }
+
   /** *Move to project…* (CA-11): the owner's other projects; the confirmation
    * lists the settings that change, resolved on the new chain; `done(project)`. */
   function moveStation(station, attrs, from, owner, done) {
     var dr = ui.openDrawer(esc(t('lifecycle.move.title', 'Move to project…')), esc(station.name));
-    dr.body.appendChild(h('<div class="ts-loading"></div>')).textContent = t('lifecycle.move.loading', 'Loading the projects…');
+    var list = namedList('data-project', t('common.project', 'Project'), t('lifecycle.move.noOther', 'The owner has no other project.'), confirmMove);
+    dr.body.appendChild(list.el);
     tb.ownerProjects(owner).then(function (projects) {
-      dr.body.innerHTML = '';
-      var others = projects.filter(function (p) { return p.id !== from.id; }).sort(function (a, b) { return a.name.localeCompare(b.name); });
-      if (!others.length) { dr.body.appendChild(h('<div class="ts-empty"></div>')).textContent = t('lifecycle.move.noOther', 'The owner has no other project.'); }
-      others.forEach(function (p) {
-        var o = dr.body.appendChild(h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>'));
-        o.setAttribute('data-project', p.name);
-        o.querySelector('.ts-opt-label').textContent = p.name;
-        o.addEventListener('click', function () { confirmMove(p); });
-      });
+      list.set(projects.filter(function (p) { return p.id !== from.id; }));
     }).catch(function (err) { dr.body.innerHTML = ''; dr.body.appendChild(h('<div class="ts-empty ts-error"></div>')).textContent = errText(err); });
 
     function confirmMove(to) {
@@ -277,20 +288,14 @@ root.TerrySenseLifecycle = function (ui, tb) {
    * the device leaves; one save disconnects it and changes its owner. */
   function reassign(device, done) {
     var dr = ui.openDrawer(esc(t('lifecycle.reassign.title', 'Reassign…')), esc(deviceName(device)));
-    dr.body.appendChild(h('<div class="ts-loading"></div>')).textContent = t('lifecycle.reassign.loading', 'Loading the owners…');
+    dr.body.appendChild(h('<div class="ts-field-hint"></div>')).textContent =
+      t('lifecycle.reassign.hint', 'The device leaves every station first: a station takes readings only from devices of its own owner.');
+    var list = namedList('data-owner', t('common.customer', 'Customer'), '', confirmReassign);
+    dr.body.appendChild(list.el);
     Promise.all([tb.ownerOf(device), tb.currentUser(), tb.getAll('/api/customers', {})]).then(function (got) {
-      var current = got[0], owners = [{ entityType: 'TENANT', id: got[1].tenantId.id, name: t('lifecycle.reassign.tenant', 'Tenant, no customer') }].concat(
-        got[2].map(function (c) { return { entityType: 'CUSTOMER', id: c.id.id, name: c.title }; })
-          .sort(function (a, b) { return a.name.localeCompare(b.name); }));
-      dr.body.innerHTML = '';
-      dr.body.appendChild(h('<div class="ts-field-hint"></div>')).textContent =
-        t('lifecycle.reassign.hint', 'The device leaves every station first: a station takes readings only from devices of its own owner.');
-      owners.filter(function (o) { return o.id !== current.id; }).forEach(function (o) {
-        var row = dr.body.appendChild(h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>'));
-        row.setAttribute('data-owner', o.name);
-        row.querySelector('.ts-opt-label').textContent = o.name;
-        row.addEventListener('click', function () { confirmReassign(o); });
-      });
+      var current = got[0], tenant = { entityType: 'TENANT', id: got[1].tenantId.id, name: t('lifecycle.reassign.tenant', 'Tenant, no customer'), first: true };
+      list.set([tenant].concat(got[2].map(function (c) { return { entityType: 'CUSTOMER', id: c.id.id, name: c.title }; }))
+        .filter(function (o) { return o.id !== current.id; }));
     }).catch(function (err) { dr.body.innerHTML = ''; dr.body.appendChild(h('<div class="ts-empty ts-error"></div>')).textContent = errText(err); });
 
     function confirmReassign(owner) {

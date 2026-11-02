@@ -74,6 +74,9 @@ function esc(s) {
   });
 }
 
+/** Lower case, accents dropped: what a search compares. */
+function fold(s) { return String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+
 function h(html) {
   var t = document.createElement('template');
   t.innerHTML = String(html).trim();
@@ -336,6 +339,137 @@ root.TerrySenseUi = function (rootEl) {
     return el;
   }
 
+  /**
+   * A list to pick one entry from (FRONTEND.md *Interface conventions*, Pick lists). opts: {key(item),
+   * text(item) what the search reads, option(item) the row element, onPick(item), filters [{id, label,
+   * test(item), on}], sorts [{id, label, compare(a, b), group(item)}] the first the default, a group naming
+   * the heading an entry falls under; top [{key, label}] fixed rows above the list, placeholder, empty}.
+   * Returns {el, set(items)}; null items read as loading.
+   */
+  function pickList(opts) {
+    var t = root.TerrySenseT, filters = opts.filters || [], sorts = opts.sorts || [], items = null;
+    var el = h('<div class="ts-pick"><div class="ts-pick-bar"><div class="ts-search">' + ICON.search + '<input class="ts-input" type="search" data-f="search"></div>' +
+      '<label class="ts-pick-sort"><span></span><select class="ts-select" data-f="sort"></select></label></div>' +
+      '<div class="ts-picker-opts"></div><div class="ts-pick-count"></div><div class="ts-pick-list"></div></div>');
+    var input = el.querySelector('input'), sortSel = el.querySelector('select'), list = el.querySelector('.ts-pick-list');
+    input.placeholder = opts.placeholder || t('ui.pick.search', 'Search');
+    el.querySelector('.ts-pick-sort span').textContent = t('ui.pick.sortBy', 'Sort by');
+    sorts.forEach(function (s) { sortSel.appendChild(h('<option></option>')).textContent = s.label; sortSel.lastChild.value = s.id; });
+    el.querySelector('.ts-pick-sort').hidden = sorts.length < 2;
+    var optsEl = el.querySelector('.ts-picker-opts');
+    filters.forEach(function (f) {
+      var sw = optsEl.appendChild(h('<label class="ts-switch"><input type="checkbox"> <span></span></label>'));
+      sw.querySelector('input').setAttribute('data-f', f.id);
+      sw.querySelector('input').checked = !!f.on;
+      sw.querySelector('span').textContent = f.label;
+      sw.querySelector('input').addEventListener('change', function (e) { f.on = e.target.checked; render(); });
+    });
+    input.addEventListener('input', render);
+    sortSel.addEventListener('change', render);
+    input.addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') { return; }
+      var rows = list.querySelectorAll('[data-pick]');
+      if (rows.length === 1) { rows[0].click(); }
+    });
+    (opts.top || []).forEach(function (x) {
+      var o = el.insertBefore(h('<div class="ts-opt ts-pick-top" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>'), list);
+      o.setAttribute('data-pick', x.key);
+      o.querySelector('.ts-opt-label').textContent = x.label;
+      o.addEventListener('click', function () { opts.onPick(x); });
+      o.addEventListener('keydown', function (e) { if (e.key === 'Enter') { opts.onPick(x); } });
+    });
+
+    // A filter that would keep nothing is left out, so it never empties the list.
+    function live(f) { return items.some(f.test); }
+
+    function render() {
+      list.innerHTML = '';
+      var count = el.querySelector('.ts-pick-count');
+      if (!items) {
+        el.querySelector('.ts-pick-bar').hidden = optsEl.hidden = count.hidden = true;
+        list.appendChild(h('<div class="ts-loading"></div>')).textContent = t('common.loading', 'Loading…');
+        return;
+      }
+      var active = filters.filter(function (f) {
+        var on = live(f);
+        optsEl.querySelector('[data-f="' + f.id + '"]').parentNode.hidden = !on;
+        return on && f.on;
+      });
+      optsEl.hidden = !filters.some(live);
+      // Short lists need neither: their entries are all in view.
+      el.querySelector('.ts-pick-bar').hidden = items.length <= 8;
+      var words = fold(input.value).split(/\s+/).filter(Boolean);
+      var sort = sorts.filter(function (s) { return s.id === sortSel.value; })[0] || sorts[0];
+      var shown = items.filter(function (x) {
+        if (active.some(function (f) { return !f.test(x); })) { return false; }
+        var hay = fold(opts.text(x));
+        return words.every(function (w) { return hay.indexOf(w) >= 0; });
+      });
+      if (sort) { shown.sort(sort.compare); }
+      count.hidden = shown.length === items.length;
+      count.textContent = t('device.nOf', '{n} of {total}', { n: shown.length, total: items.length });
+      var heading = null;
+      shown.forEach(function (x) {
+        var g = sort && sort.group ? sort.group(x) : null;
+        if (g !== null && g !== heading) { list.appendChild(h('<div class="ts-subhead"></div>')).textContent = g; }
+        heading = g;
+        var o = list.appendChild(opts.option(x));
+        o.setAttribute('data-pick', opts.key(x));
+        o.addEventListener('click', function () { opts.onPick(x); });
+        o.addEventListener('keydown', function (e) { if (e.key === 'Enter') { opts.onPick(x); } });
+      });
+      if (!shown.length) {
+        list.appendChild(h('<div class="ts-empty"></div>')).textContent = !items.length ? opts.empty || t('ui.pick.none', 'Nothing to pick.')
+          : active.length ? t('ui.pick.noMatchFiltered', 'Nothing matches: clear a filter to see more.') : t('ui.pick.noMatch', 'Nothing matches.');
+      }
+    }
+    render();
+    return {
+      el: el,
+      set: function (next) {
+        items = next;
+        render();
+        if (items && !el.querySelector('.ts-pick-bar').hidden) { setTimeout(function () { input.focus(); }, 0); }
+      }
+    };
+  }
+
+  /**
+   * A field holding one pick: a button naming it, opening `pickList(opts)` under it. `opts.name(item)` names
+   * the picked entry, `opts.none` the button before a pick. Returns {el, set(items), value(), pick(key)}; the
+   * button fires `change` on each pick.
+   */
+  function pickField(opts) {
+    var items = null, picked = null, top = opts.top || [], open = null;
+    var el = h('<button type="button" class="ts-select wide ts-pick-field"><span class="ts-grow"></span>' + ICON.down + '</button>');
+    function show() { el.firstChild.textContent = !picked ? opts.none : top.indexOf(picked) >= 0 ? picked.label : opts.name(picked); }
+    function pick(x) {
+      picked = x;
+      show();
+      el.dispatchEvent(new Event('change'));
+    }
+    el.addEventListener('click', function () {
+      var pop, box = open = pickList(Object.assign({}, opts, { onPick: function (x) { pop.close(); pick(x); } }));
+      pop = popover(el, box.el);
+      pop.el.classList.add('ts-pick-pop');
+      box.set(items);
+    });
+    show();
+    return {
+      el: el,
+      set: function (next) {
+        items = next;
+        if (open && open.el.isConnected) { open.set(items); }
+      },
+      value: function () { return picked; },
+      pick: function (key) {
+        var x = top.filter(function (i) { return i.key === key; })[0] || (items || []).filter(function (i) { return opts.key(i) === key; })[0];
+        if (x) { pick(x); }
+        return !!x;
+      }
+    };
+  }
+
   /** The tenant's public image of a device type, or null. */
   function productImage(type) { return PRODUCT_IMAGES[String(type || '').toLowerCase()] || null; }
 
@@ -511,7 +645,7 @@ root.TerrySenseUi = function (rootEl) {
     productImage: productImage, radioLevel: radioLevel, metric: metric,
     ICON: ICON, esc: esc, h: h, info: info, sevDot: sevDot, markerColor: markerColor, pin: pin, glossary: glossary,
     toast: toast, confirm: confirm, card: card, openDrawer: openDrawer, closeDrawer: closeDrawer,
-    drawerActions: drawerActions, popover: popover, namePicker: namePicker, nameOption: nameOption
+    drawerActions: drawerActions, popover: popover, namePicker: namePicker, nameOption: nameOption, pickList: pickList, pickField: pickField
   };
 };
 

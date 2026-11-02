@@ -447,24 +447,34 @@ function openNew() {
   var input = dr.body.querySelector('[data-f=name]');
   var owner = null;
   if (tenant) {
-    owner = h('<select class="ts-select wide" data-f="owner"><option value="">in-Terra</option></select>');
+    var inTerra = { key: '', label: 'in-Terra' };
+    owner = ui.pickField({
+      none: inTerra.label,
+      top: [inTerra],
+      key: function (c) { return c.id.id; },
+      name: function (c) { return c.title; },
+      text: function (c) { return c.title; },
+      placeholder: t('common.customer', 'Customer'),
+      sorts: [{ id: 'name', label: t('common.name', 'Name'), compare: function (a, b) { return a.title.localeCompare(b.title); } }],
+      option: function (c) {
+        var o = h('<div class="ts-opt" tabindex="0"><div class="ts-opt-main"><div class="ts-opt-label"></div></div></div>');
+        o.querySelector('.ts-opt-label').textContent = c.title;
+        return o;
+      }
+    });
+    owner.el.setAttribute('data-f', 'owner');
     var field = h('<div class="ts-field"><div class="ts-field-label">' + esc(t('common.owner', 'Owner')) + '</div></div>');
-    field.appendChild(owner);
+    field.appendChild(owner.el);
     dr.body.appendChild(ui.tenantSection(field));
     tb.getAll('/api/customers').then(function (list) {
-      list.filter(function (c) { return !(c.additionalInfo || {}).isPublic; })
-        .sort(function (a, b) { return a.title.localeCompare(b.title); }).forEach(function (c) {
-          var o = owner.appendChild(document.createElement('option'));
-          o.value = c.id.id;
-          o.textContent = c.title;
-        });
+      owner.set(list.filter(function (c) { return !(c.additionalInfo || {}).isPublic; }));
     }).catch(function (err) { ui.toast(t('projects.customersFailed', 'Customers not loaded: {error}', { error: errText(err) }), 'error'); });
   }
   var go = ui.drawerActions(dr, t('common.create', 'Create'));
   go.disabled = true;
   input.addEventListener('input', function () { go.disabled = !input.value.trim(); });
   go.addEventListener('click', function () {
-    var customer = tenant ? owner.value : state.me.customerId.id;
+    var picked = tenant && owner.value(), customer = tenant ? picked && picked.id && picked.id.id : state.me.customerId.id;
     go.disabled = true;
     tb.createProject(input.value.trim(), customer ? { entityType: 'CUSTOMER', id: customer } : { entityType: 'TENANT', id: state.me.tenantId.id }).then(function (created) {
       ui.closeDrawer();
