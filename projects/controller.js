@@ -147,8 +147,8 @@ function statusOf(entry) {
   return { id: 'alarm', label: t.severity(worst, G.severity(worst).label), color: 'var(--sev-' + worst + ')', rank: 10 + G.rank(worst) };
 }
 
-/** The colour of a marker's dot: an alarm's severity, or No station; none when OK. */
-function dotOf(status) { return status.id === 'ok' ? null : status.color; }
+/** The colour of a marker's ring: an alarm's severity, or No station; none when OK. */
+function ringOf(status) { return status.id === 'ok' ? null : status.color; }
 
 function worstOf(entries) {
   return entries.reduce(function (w, p) { return !w || p.status.rank > w.rank ? p.status : w; }, null) || STATUS.none;
@@ -245,7 +245,7 @@ function initMap() {
     iconCreateFunction: function (cluster) {
       var entries = cluster.getAllChildMarkers().map(function (m) { return m.options.entry; });
       return L.divIcon({ className: 'ts-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15],
-        html: ui.pin('var(--ts-accent)', String(entries.length), dotOf(worstOf(entries))) });
+        html: ui.pin('var(--ts-accent)', String(entries.length), ringOf(worstOf(entries))) });
     }
   }).addTo(map);
   clusterLayer.on('clusterclick', function (ev) {
@@ -274,7 +274,7 @@ function drawMarkers() {
       poly.on('click', function () { toggle(entry); });
       areaLayer.addLayer(poly);
     }
-    var icon = L.divIcon({ className: 'ts-pin-wrap', iconSize: [22, 22], iconAnchor: [11, 11], html: ui.pin(entry.color, '', dotOf(entry.status)) });
+    var icon = L.divIcon({ className: 'ts-pin-wrap', iconSize: [22, 22], iconAnchor: [11, 11], html: ui.pin(entry.color, '', ringOf(entry.status)) });
     var m = L.marker(entry.latLng, { icon: icon, keyboard: true, title: entry.project.name, entry: entry });
     m.bindTooltip(esc(entry.project.name) + ' · ' + esc(entry.status.label), { direction: 'top', offset: [0, -10] });
     m.on('click', function (ev) { L.DomEvent.stopPropagation(ev); toggle(entry); });

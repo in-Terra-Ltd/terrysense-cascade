@@ -209,8 +209,8 @@ function statusOf(entry) {
   return Object.assign({ id: 'ok' }, STATUS.ok);
 }
 
-/** The colour of a marker's dot: an alarm's severity or No data; none when OK or archived. */
-function dotOf(status) { return status.id === 'alarm' || status.id === 'nodata' ? status.color : null; }
+/** The colour of a marker's ring: an alarm's severity or No data; none when OK or archived. */
+function ringOf(status) { return status.id === 'alarm' || status.id === 'nodata' ? status.color : null; }
 
 function worstOf(entries) {
   return entries.reduce(function (w, s) { return !w || s.status.rank > w.rank ? s.status : w; }, null) || STATUS.none;
@@ -293,13 +293,13 @@ function initMap() {
   layers[t('map.swiss', 'Swiss map')] = swiss;
   layers[t('map.aerial', 'Aerial')] = aerial;
   L.control.layers(layers, null, { position: 'topright' }).addTo(map);
-  // Stations close together at the current zoom are one cluster in terrySense blue, its dot the worst of them (FRONTEND.md *Projects dashboard*).
+  // Stations close together at the current zoom are one cluster in terrySense blue, ringed in the worst of them (FRONTEND.md *Projects dashboard*).
   clusterLayer = L.markerClusterGroup({
     showCoverageOnHover: false, maxClusterRadius: 40, zoomToBoundsOnClick: false,
     iconCreateFunction: function (cluster) {
       var entries = cluster.getAllChildMarkers().map(function (m) { return m.options.entry; });
       return L.divIcon({ className: 'ts-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15],
-        html: ui.pin('var(--ts-accent)', String(entries.length), dotOf(worstOf(entries))) });
+        html: ui.pin('var(--ts-accent)', String(entries.length), ringOf(worstOf(entries))) });
     }
   }).addTo(map);
   clusterLayer.on('clusterclick', function (ev) {
@@ -354,7 +354,7 @@ function drawMarkers() {
     if (!entry.latLng || entry.service.retired && !state.showRetired) { return; }
     var silenced = entry.service.silencedUntil;
     var icon = L.divIcon({ className: 'ts-pin-wrap' + (entry.service.retired ? ' retired' : ''), iconSize: [22, 22], iconAnchor: [11, 11],
-      html: ui.pin(entry.color, '', dotOf(entry.status), silenced) });
+      html: ui.pin(entry.color, '', ringOf(entry.status), silenced) });
     var m = L.marker(entry.latLng, { icon: icon, draggable: state.editMap, keyboard: true, title: entry.station.name,
       pmIgnore: true, entry: entry });
     var stale = staleText(entry);

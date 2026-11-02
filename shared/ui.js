@@ -132,10 +132,9 @@ root.TerrySenseUi = function (rootEl) {
     return /^#[0-9a-f]{6}$/i.test(c || '') ? c : '#0277b7';
   }
 
-  /** A map marker in `color`, `text` inside it, and in its top right corner a dot of colour `dot`, the state, or the silenced badge. */
-  function pin(color, text, dot, silenced) {
-    return '<span class="ts-pin' + (silenced ? ' silenced' : '') + '" style="--c:' + color + '"><b>' + esc(text) + '</b>' +
-      (dot ? '<i class="ts-pin-dot" style="--d:' + dot + '"></i>' : '') +
+  /** A map marker in `color`, `text` inside it, ringed in `ring`, the state, and the silenced badge. */
+  function pin(color, text, ring, silenced) {
+    return '<span class="ts-pin' + (ring ? ' ring' : '') + (silenced ? ' silenced' : '') + '" style="--c:' + color + (ring ? ';--r:' + ring : '') + '"><b>' + esc(text) + '</b>' +
       (silenced ? '<i class="ts-pin-badge">' + ICON.mute + '</i>' : '') + '</span>';
   }
 
