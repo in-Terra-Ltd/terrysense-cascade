@@ -739,8 +739,9 @@ function storeDrawer(r) {
   dr.foot.insertBefore(connect, dr.foot.firstChild);
   connect.addEventListener('click', function () { bindDrawer(null); });
 
-  /** What the row changes: null for nothing, else `{next, note}` or `{error}`. */
-  function plan(x) {
+  /** What the row changes: null for nothing, else `{next, note, from, to}` or `{error}`; `moving` whether the readings so far
+   * move with a renamed channel. */
+  function plan(x, moving) {
     var target = x.box.checked ? x.sel.value : null;
     if (target === x.from) { return null; }
     var p = M.storeOne(x.b.entries, me, r.key, x.from, target);
@@ -748,17 +749,18 @@ function storeDrawer(r) {
       return { error: t('device.channelTaken', '{label} ({channel}) already stores another measurement of this device: change that one first.', { label: channelLabel(target), channel: target }) };
     }
     var note = !target ? t('device.leavesStation', 'leaves the station, which keeps its history')
+      : x.from && moving ? t('device.storedAsMoving', 'stored as {key}; the readings so far move from {from}', { key: target, from: x.from })
       : x.from ? t('device.storedAsFrom', 'stored as {key}; the readings so far stay under {from}', { key: target, from: x.from }) : t('device.storedAs', 'stored as {key}', { key: target });
     if (p.takenOver) {
       note += p.takenOver.device ? t('device.takenFromDevice', '; {channel} moves from another device to this measurement, its history kept', { channel: target })
         : t('device.takenFromNone', '; {channel} moves from no device to this measurement, its history kept', { channel: target });
     }
-    return { next: p.next, note: note };
+    return { next: p.next, note: note, from: target && x.from, to: target };
   }
   function update() {
     var error = false;
     rows.forEach(function (x) {
-      var p = plan(x);
+      var p = plan(x, true);
       x.row.classList.toggle('off', !x.box.checked);
       x.sel.disabled = !x.box.checked || !x.b.writable;
       var key = x.row.querySelector('.ts-bind-key');
@@ -772,11 +774,15 @@ function storeDrawer(r) {
   update();
 
   go.addEventListener('click', function () {
-    var changes = rows.map(function (x) { return { x: x, p: plan(x) }; }).filter(function (c) { return c.p; });
+    var changes = rows.map(function (x) { return { x: x, p: plan(x, true) }; }).filter(function (c) { return c.p; });
     if (!changes.length) { ui.closeDrawer(); return; }
-    ui.confirm(t('device.storeConfirm', '{label} of {device}:', { label: '<b>' + esc(r.label) + '</b>', device: deviceName() }) + '<ul>' + changes.map(function (c) {
-      return '<li>' + esc(c.x.b.station.name) + ': ' + esc(c.p.note) + '</li>';
-    }).join('') + '</ul>', t('common.save', 'Save')).then(function (ok) {
+    var renames = changes.filter(function (c) { return c.p.from; });
+    var carry = renames.length ? { label: t('device.moveReadings', 'Move the readings so far to the new names'), checked: true } : null;
+    ui.confirm(function (moving) {
+      return t('device.storeConfirm', '{label} of {device}:', { label: '<b>' + esc(r.label) + '</b>', device: deviceName() }) + '<ul>' + changes.map(function (c) {
+        return '<li>' + esc(c.x.b.station.name) + ': ' + esc(plan(c.x, moving).note) + '</li>';
+      }).join('') + '</ul>';
+    }, t('common.save', 'Save'), carry).then(function (ok) {
       if (!ok) { return; }
       var at = Date.now();
       return Promise.all(changes.map(function (c) {
@@ -788,6 +794,10 @@ function storeDrawer(r) {
       }).then(function () {
         ui.toast(t('common.saved', 'Saved'));
         ui.closeDrawer();
+        return carry && carry.checked ? renames.reduce(function (work, c) {
+          return work.then(function () { return History.rename(ui, tb, c.x.b.station, c.p.from, c.p.to); });
+        }, Promise.resolve()) : null;
+      }).then(function () {
         return refresh();
       }).then(function () {
         return changes.reduce(function (work, c) {

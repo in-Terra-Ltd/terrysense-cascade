@@ -859,7 +859,6 @@ function plan(d, r, c, target) {
     notes.push(t('station.takeOver', '{name} is fed by {source} now; it moves to this measurement, its history kept.', { name: target,
       source: other ? deviceName(other) : held.device ? t('station.anotherDevice', 'another device') : t('station.noDeviceSource', 'no device') }));
   }
-  if (c && c.name !== target) { notes.push(t('station.readingsStay', 'The readings so far stay under {old}; new readings go to {name}.', { old: c.name, name: target })); }
   return { next: p.next, notes: notes, takenOver: held ? [target] : [] };
 }
 
@@ -872,10 +871,15 @@ function saveMapping(d, r, c, target, labelText) {
   var labelChanged = labelText !== ownText;
   if (!mapChanged && !labelChanged) { ui.closeDrawer(); return; }
   var q = { measurement: esc(r.label), device: esc(deviceName(d)), name: esc(target), old: c ? esc(c.name) : '', station: esc(state.station.name) };
-  var text = (c ? t('station.storeInstead', 'Store <b>{measurement}</b> of <b>{device}</b> as <b>{name}</b> instead of <b>{old}</b>?', q)
-    : t('station.storeOn', 'Store <b>{measurement}</b> of <b>{device}</b> on <b>{station}</b> as <b>{name}</b>?', q)) +
-    (p.notes.length ? ' ' + p.notes.map(esc).join(' ') : '');
-  (mapChanged ? ui.confirm(text, t('common.save', 'Save')) : Promise.resolve(true)).then(function (ok) {
+  var renamed = !!c && c.name !== target;
+  var carry = renamed ? { label: t('station.moveReadings', 'Move the readings so far to {name}', { name: target }), checked: true } : null;
+  function text(moving) {
+    return (c ? t('station.storeInstead', 'Store <b>{measurement}</b> of <b>{device}</b> as <b>{name}</b> instead of <b>{old}</b>?', q)
+      : t('station.storeOn', 'Store <b>{measurement}</b> of <b>{device}</b> on <b>{station}</b> as <b>{name}</b>?', q)) +
+      (p.notes.length ? ' ' + p.notes.map(esc).join(' ') : '') +
+      (renamed && !moving ? ' ' + esc(t('station.readingsStay', 'The readings so far stay under {old}; new readings go to {name}.', { old: c.name, name: target })) : '');
+  }
+  (mapChanged ? ui.confirm(text, t('common.save', 'Save'), carry) : Promise.resolve(true)).then(function (ok) {
     if (!ok) { return null; }
     var s = state.station, write = {}, before = state.entries, at = Date.now();
     if (mapChanged) { write['config.channelMap'] = resolver.buildMap(p.next); }
@@ -889,6 +893,8 @@ function saveMapping(d, r, c, target, labelText) {
     }).then(function () {
       ui.closeDrawer();
       ui.toast(t('common.saved', 'Saved'));
+      return carry && carry.checked ? History.rename(ui, tb, s, c.name, target) : null;
+    }).then(function () {
       return refresh();
     }).then(function () {
       return mapChanged ? History.offer(ui, tb, s, { entityType: 'DEVICE', id: d.id, name: deviceName(d) }, before, p.next, at, state.names) : null;

@@ -1,12 +1,14 @@
 /*
- * Earlier readings of a device brought onto a station — `window.TerrySenseHistory(get, post)`,
- * `get` and `post` being tb_io's. When a station starts storing measurements of a device, the
+ * Earlier readings of a device brought onto a station — `window.TerrySenseHistory(get, post, del)`,
+ * `get`, `post` and `del` being tb_io's. When a station starts storing measurements of a device, the
  * device may hold readings from before: `survey` says what it holds per channel, `copy` copies a
  * period of it under the station's channel names. A channel takes only readings newer than its
  * own newest, so its series never interleaves two sources (CHANNEL_MAP.md §1). Written through
  * the REST API, the copies reach the station's chain as TIMESERIES_UPDATED, which it drops: no
  * alarm, no notification (MIGRATION_LESSONS.md §2). `TerrySenseHistory.offer` is the dialog.
- * Spec: logr-product-docs/cloud/DEVICE_VIEW.md §2 *Earlier readings*.
+ * A stored measurement saved under another name takes its readings so far along: `move`,
+ * `TerrySenseHistory.rename`.
+ * Spec: logr-product-docs/cloud/DEVICE_VIEW.md §2 *Earlier readings*, *Another name*.
  *
  * Loads after resolver.js, ui.js and tb_io.js.
  */
@@ -16,6 +18,8 @@
 var PAGE = 5000;
 var DAY_MS = 86400000;
 var PERIODS = { day: 1, week: 7, month: 30 };
+// Readings a device clock stamped ahead of now move with a channel too.
+var END_OF_TIME = 4102444800000;
 
 function series(entity) { return '/api/plugins/telemetry/' + entity.entityType + '/' + entity.id; }
 
@@ -52,7 +56,7 @@ function calculatedFrom(channels, names) {
   return found;
 }
 
-root.TerrySenseHistory = function (get, post) {
+root.TerrySenseHistory = function (get, post, del) {
 
   function edge(entity, keys, end, order) {
     return get(series(entity) + '/values/timeseries', { keys: keys.join(','), startTs: '0', endTs: String(end), limit: '1', agg: 'NONE', orderBy: order })
@@ -79,38 +83,87 @@ root.TerrySenseHistory = function (get, post) {
   /** Where a row's copy starts for a period starting `from`: after the station's newest reading of the channel. */
   function startOf(row, from) { return row.stationLast ? Math.max(from, row.stationLast + 1) : from; }
 
-  /** Copy the readings of `rows` (from `survey`) between `from` and `at` onto the station, with `ttlS` seconds
-   * of retention when set; `progress(copied)` after each page. Resolves the number of readings copied. */
-  function copy(device, station, rows, from, at, ttlS, progress) {
-    var target = series(station) + '/timeseries/ANY' + (ttlS ? '/' + ttlS : ''), total = 0;
-    function page(row, start) {
-      if (start > at) { return Promise.resolve(); }
-      return get(series(device) + '/values/timeseries', { keys: row.key, startTs: String(start), endTs: String(at), limit: String(PAGE),
+  /** Copy `key` of `source` between `start` and `end` under `channel` of `station`, a page at a time;
+   * `counted(n)` after each page. */
+  function transfer(source, key, station, channel, start, end, ttlS, counted) {
+    var target = series(station) + '/timeseries/ANY' + (ttlS ? '/' + ttlS : '');
+    function page(from) {
+      if (from > end) { return Promise.resolve(); }
+      return get(series(source) + '/values/timeseries', { keys: key, startTs: String(from), endTs: String(end), limit: String(PAGE),
         agg: 'NONE', orderBy: 'ASC', useStrictDataTypes: 'true' }).then(function (res) {
-        var pts = ((res && res[row.key]) || []).filter(function (p) { return p.value !== null && p.value !== undefined; });
+        var pts = ((res && res[key]) || []).filter(function (p) { return p.value !== null && p.value !== undefined; });
         if (!pts.length) { return null; }
-        var body = pts.map(function (p) { var v = {}; v[row.channel] = p.value; return { ts: Number(p.ts), values: v }; });
+        var body = pts.map(function (p) { var v = {}; v[channel] = p.value; return { ts: Number(p.ts), values: v }; });
         return post(target, body).then(function () {
-          total += pts.length;
-          if (progress) { progress(total); }
-          return pts.length < PAGE ? null : page(row, Number(pts[pts.length - 1].ts) + 1);
+          counted(pts.length);
+          return pts.length < PAGE ? null : page(Number(pts[pts.length - 1].ts) + 1);
         });
       });
     }
+    return page(start);
+  }
+
+  /** Copy the readings of `rows` (from `survey`) between `from` and `at` onto the station, with `ttlS` seconds
+   * of retention when set; `progress(copied)` after each page. Resolves the number of readings copied. */
+  function copy(device, station, rows, from, at, ttlS, progress) {
+    var total = 0;
+    function counted(n) { total += n; if (progress) { progress(total); } }
     var work = Promise.resolve();
     rows.forEach(function (row) {
       if (!row.last || row.last < startOf(row, from)) { return; }
-      work = work.then(function () { return page(row, startOf(row, from)); });
+      work = work.then(function () { return transfer(device, row.key, station, row.channel, startOf(row, from), at, ttlS, counted); });
     });
     return work.then(function () { return total; });
   }
 
-  return { survey: survey, copy: copy, startOf: startOf };
+  /** Move the station's readings under channel `from` that are newer than the newest under `to` to `to`, with
+   * `ttlS` seconds of retention when set; `progress(moved)` after each page. `from` is deleted once all of it
+   * moved and `to` holds its newest reading. Resolves `{moved, deleted}`. */
+  function move(station, from, to, ttlS, progress) {
+    var end = END_OF_TIME, moved = 0;
+    return Promise.all([edge(station, [to], end, 'DESC'), edge(station, [from], end, 'ASC'), edge(station, [from], end, 'DESC')]).then(function (got) {
+      var toLast = got[0][to], first = got[1][from], last = got[2][from];
+      if (!first || (toLast && toLast >= last)) { return { moved: 0, deleted: false }; }
+      return transfer(station, from, station, to, toLast ? toLast + 1 : 0, end, ttlS, function (n) {
+        moved += n;
+        if (progress) { progress(moved); }
+      }).then(function () {
+        return toLast && toLast >= first ? false : edge(station, [to], end, 'DESC').then(function (held) {
+          if ((held[to] || 0) < last) { return false; }
+          return del(series(station) + '/timeseries/delete', { keys: from, deleteAllDataForKeys: 'true' }).then(function () { return true; });
+        });
+      }).then(function (deleted) { return { moved: moved, deleted: deleted }; });
+    });
+  }
+
+  /** Clear the station's active alarms of channel `channel`. Resolves how many. */
+  function clearAlarms(station, channel) {
+    return get('/api/alarm/' + station.entityType + '/' + station.id, { pageSize: '100', page: '0', searchStatus: 'ACTIVE' }).then(function (res) {
+      var mine = ((res && res.data) || []).filter(function (a) { return String(a.type).indexOf(channel + '.') === 0; });
+      return Promise.all(mine.map(function (a) { return post('/api/alarm/' + a.id.id + '/clear'); })).then(function () { return mine.length; });
+    });
+  }
+
+  return { survey: survey, copy: copy, startOf: startOf, move: move, clearAlarms: clearAlarms };
 };
+
+/** The writes that carry `channel.<from>.*` of `attrs` over to `channel.<to>.*`, a setting `to` has of its own kept:
+ * `{write, remove}`. */
+function settingsMoved(attrs, from, to) {
+  var prefix = 'channel.' + from + '.', write = {}, remove = [];
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k.indexOf(prefix) !== 0) { return; }
+    var next = 'channel.' + to + '.' + k.slice(prefix.length);
+    if (!(next in attrs)) { write[next] = attrs[k]; }
+    remove.push(k);
+  });
+  return { write: write, remove: remove };
+}
 
 root.TerrySenseHistory.added = added;
 root.TerrySenseHistory.periodStart = periodStart;
 root.TerrySenseHistory.calculatedFrom = calculatedFrom;
+root.TerrySenseHistory.settingsMoved = settingsMoved;
 
 /**
  * Offer to copy the earlier readings of `device` (`{entityType, id, name}`) onto `station` for the channels it
@@ -120,7 +173,7 @@ root.TerrySenseHistory.calculatedFrom = calculatedFrom;
  */
 root.TerrySenseHistory.offer = function (ui, tb, station, device, before, after, at, names) {
   var t = root.TerrySenseT, h = ui.h, esc = ui.esc;
-  var io = root.TerrySenseHistory(tb.get, tb.post);
+  var io = root.TerrySenseHistory(tb.get, tb.post, tb.del);
   var channels = added(before, after, device.id);
   if (!Object.keys(channels).length) { return Promise.resolve(null); }
   function fail(err) {
@@ -223,6 +276,44 @@ root.TerrySenseHistory.offer = function (ui, tb, station, device, before, after,
       ui.card().appendChild(el);
     });
   }).catch(fail);
+};
+
+/**
+ * Carry channel `from` of `station` over to `to` after a save that stores its measurement as `to`: its
+ * `channel.<from>.*` settings, its active alarms cleared, its readings so far, then a resolve. A toast says
+ * what moved. Resolves true once readings moved.
+ */
+root.TerrySenseHistory.rename = function (ui, tb, station, from, to) {
+  var t = root.TerrySenseT;
+  var io = root.TerrySenseHistory(tb.get, tb.post, tb.del);
+  var busy = ui.h('<div class="ts-toast"><span></span></div>');
+  function status(text) { busy.querySelector('span').textContent = text; }
+  status(t('history.moving', 'Moving the readings of {old} to {name}… {n}', { old: from, name: to, n: 0 }));
+  ui.card().appendChild(busy);
+  return tb.attrsMap(station).then(function (attrs) {
+    var s = settingsMoved(attrs, from, to), ttlDays = Number(attrs['effective.ttlDays']);
+    var ttlS = ttlDays > 0 ? Math.round(ttlDays * DAY_MS / 1000) : 0;
+    return (Object.keys(s.write).length ? tb.saveAttrs(station, s.write) : Promise.resolve()).then(function () {
+      return s.remove.length ? tb.deleteAttrs(station, s.remove) : null;
+    }).then(function () {
+      return io.clearAlarms(station, from);
+    }).then(function () {
+      return io.move(station, from, to, ttlS, function (n) {
+        status(t('history.moving', 'Moving the readings of {old} to {name}… {n}', { old: from, name: to, n: n }));
+      });
+    }).then(function (r) {
+      return tb.resolveStations([station]).then(function () {
+        busy.remove();
+        ui.toast(r.deleted || !r.moved ? t('history.moved', '{n} readings moved from {old} to {name}', { n: r.moved, old: from, name: to })
+          : t('history.movedKept', '{n} readings moved from {old} to {name}; older ones stay under {old}', { n: r.moved, old: from, name: to }));
+        return r.moved > 0;
+      });
+    });
+  }).catch(function (err) {
+    busy.remove();
+    ui.toast(t('history.notMoved', 'Readings not moved: {error}', { error: (err && (err.message || (err.error && err.error.message))) || String(err) }), 'error');
+    return false;
+  });
 };
 
 if (typeof module !== 'undefined' && module.exports) { module.exports = root.TerrySenseHistory; }
