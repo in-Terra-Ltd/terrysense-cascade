@@ -425,14 +425,21 @@ function onMapClick(ev) {
   if (name) { addStation(name, latLng); } else if (entry) { savePosition(entry, latLng); }
 }
 
-/** *Add station* (CA-6): a name, then a click on the map. */
+/** *Add station* (CA-6): a name, then a click on the map, or *Create* to place it later. */
 function openAdd() {
   var dr = ui.openDrawer(t('overview.addStation', 'Add station'), esc(state.entity.name));
   var f = dr.body.appendChild(h('<div class="ts-field"><div class="ts-field-label">' + esc(t('common.name', 'Name')) + '</div><input class="ts-input wide" data-f="name">' +
-    '<div class="ts-field-hint">' + esc(t('overview.addHint', 'Then click the map where it stands. It shows No device yet until a device is connected.')) + '</div></div>'));
+    '<div class="ts-field-hint">' + esc(t('overview.addHint', 'Place on the map, then click where it stands; or Create, and place it later. It shows No device yet until a device is connected.')) + '</div></div>'));
   var input = f.querySelector('input'), go = ui.drawerActions(dr, t('overview.placeOnMap', 'Place on the map'));
-  go.disabled = true;
-  input.addEventListener('input', function () { go.disabled = !input.value.trim(); });
+  var now = dr.foot.insertBefore(h('<button type="button" class="ts-btn" data-a="create"></button>'), go);
+  now.textContent = t('common.create', 'Create');
+  go.disabled = now.disabled = true;
+  input.addEventListener('input', function () { go.disabled = now.disabled = !input.value.trim(); });
+  now.addEventListener('click', function () {
+    now.disabled = go.disabled = true;
+    ui.closeDrawer();
+    addStation(input.value.trim(), null);
+  });
   go.addEventListener('click', function () {
     state.adding = input.value.trim();
     state.placing = null;
@@ -444,7 +451,7 @@ function openAdd() {
 }
 
 function addStation(name, latLng) {
-  tb.createStation(name, state.entity, { latitude: latLng[0], longitude: latLng[1] }).then(function (station) {
+  tb.createStation(name, state.entity, latLng ? { latitude: latLng[0], longitude: latLng[1] } : {}).then(function (station) {
     state.followUps[station.id] = true;
     return life.stationAdded(state.entity, station, t('overview.added', '{name} added', { name: name })).then(refresh);
   }).catch(function (err) { ui.toast(t('overview.addFailed', 'Station not added: {error}', { error: errText(err) }), 'error'); });
