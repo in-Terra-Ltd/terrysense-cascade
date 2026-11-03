@@ -379,8 +379,8 @@ root.TerrySenseUi = function (rootEl) {
       o.addEventListener('keydown', function (e) { if (e.key === 'Enter') { opts.onPick(x); } });
     });
 
-    // A filter that would keep nothing is left out, so it never empties the list.
-    function live(f) { return items.some(f.test); }
+    // A filter that would keep nothing or everything changes nothing: it is left out.
+    function live(f) { return items.some(f.test) && !items.every(f.test); }
 
     function render() {
       list.innerHTML = '';
@@ -397,7 +397,7 @@ root.TerrySenseUi = function (rootEl) {
       });
       optsEl.hidden = !filters.some(live);
       // Short lists need neither: their entries are all in view.
-      el.querySelector('.ts-pick-bar').hidden = items.length <= 8;
+      el.querySelector('.ts-pick-bar').hidden = items.length <= 5;
       var words = fold(input.value).split(/\s+/).filter(Boolean);
       var sort = sorts.filter(function (s) { return s.id === sortSel.value; })[0] || sorts[0];
       var shown = items.filter(function (x) {
