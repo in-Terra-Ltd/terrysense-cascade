@@ -1286,7 +1286,8 @@ function moveChannels(move) {
 /** Hand-kept facts a device cannot report (ATTRIBUTES.md §3): the four
  * `register.*` fields of a LOGR2, and the measurement interval of any device
  * other than a LOGR3 or LOGR4, from which its inactivity timeout follows:
- * three intervals, as a LOGR3 or LOGR4 derives its own. */
+ * three intervals with the minimum of HEALTH.md §1, as a LOGR3 or LOGR4 derives its own. */
+var INACTIVITY_MIN_MS = 1800000;
 function registerFields() { return family() === 'logr2' ? register() : []; }
 
 /** The register's values in reading order, each `{key, label, value, warn}`; exceptions first. */
@@ -1341,7 +1342,7 @@ function registerDrawer() {
   });
   dr.body.appendChild(h('<div class="ts-field"><div class="ts-field-label"><span>' + esc(t('device.measurementInterval', 'Measurement interval')) + '</span></div>' +
     '<div class="ts-ctl"><span><input class="ts-input num" type="number" min="0" step="1" data-key="register.intervalSeconds"> min</span></div>' +
-    '<div class="ts-field-hint">' + esc(t('device.intervalHint', 'How often the device measures and sends. A channel older than three intervals is stale, and the device turns inactive after three intervals without an uplink.')) +
+    '<div class="ts-field-hint">' + esc(t('device.intervalHint', 'How often the device measures and sends. A channel older than three intervals is stale, and the device turns inactive after three intervals without an uplink, at least 30 minutes.')) +
     '</div></div>'));
   var minutes = dr.body.querySelector('[data-key="register.intervalSeconds"]');
   minutes.value = Number(s['register.intervalSeconds']) > 0 ? Number(s['register.intervalSeconds']) / 60 : '';
@@ -1355,7 +1356,7 @@ function registerDrawer() {
           if (s.inactivityTimeout !== undefined) { drop.push('inactivityTimeout'); }
         } else {
           write[key] = Math.round(Number(el.value) * 60);
-          write.inactivityTimeout = 3 * write[key] * 1000;
+          write.inactivityTimeout = Math.max(3 * write[key] * 1000, INACTIVITY_MIN_MS);
         }
       } else if (el.type === 'checkbox') {
         write[key] = el.checked;

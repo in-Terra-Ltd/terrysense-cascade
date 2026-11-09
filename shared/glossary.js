@@ -98,6 +98,7 @@ function severityNames() {
 function tokens() {
   return [
     { token: '${ssName}', label: t('common.station', 'Station'), len: 20 },
+    { token: '${projectName}', label: t('common.project', 'Project'), len: 25 },
     { token: '${alarmLabel}', label: t('common.measurement', 'Measurement'), len: 14 },
     { token: '${alarmChannel}', label: t('glossary.token.alarmChannel', 'Channel key'), len: 12 },
     { token: '${alarmValue}', label: t('glossary.token.alarmValue', 'Value'), len: 6 },
@@ -106,6 +107,17 @@ function tokens() {
     { token: '${alarmSeverity}', label: t('common.severity', 'Severity'), len: 8 },
     { token: '${ssUrl}', label: t('glossary.setting.url', 'Dashboard link'), len: 30 }
   ];
+}
+
+// Filled by the chain, offered as no chip.
+var UNLISTED_TOKENS = ['${deviceName}', '${alarmType}', '${alarmEvent}'];
+
+/** The `${…}` fields of a text the chain would send as written, each once. */
+function unknownTokens(text) {
+  var known = tokens().map(function (x) { return x.token; }).concat(UNLISTED_TOKENS);
+  return (String(text || '').match(/\$\{[^}]*\}/g) || []).filter(function (x, i, all) {
+    return known.indexOf(x) < 0 && all.indexOf(x) === i;
+  });
 }
 
 // A device out of service (ATTRIBUTES.md §4 *Service state*), in the order offered.
@@ -183,7 +195,7 @@ root.TerrySenseGlossary = {
   get TOKENS() { return tokens(); },
   LANGUAGES: LANGUAGES,
   get SERVICE_STATES() { return serviceStates(); },
-  SMS_MAX_PARTS: SMS_MAX_PARTS, smsInfo: smsInfo,
+  SMS_MAX_PARTS: SMS_MAX_PARTS, smsInfo: smsInfo, unknownTokens: unknownTokens,
   severity: function (id) { return severities().filter(function (s) { return s.id === id; })[0] || { id: id, label: id, desc: '' }; },
   rank: function (id) { var all = severities(); for (var i = 0; i < all.length; i++) { if (all[i].id === id) { return i; } } return -1; }
 };

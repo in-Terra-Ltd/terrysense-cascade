@@ -1786,7 +1786,19 @@ function newEntries(write) {
   return function () { return saveBook(entries); };
 }
 
-function tokenChips(ta, onChange) {
+function tokenWarning(ta) {
+  var box = h('<div class="ts-sms-count warn" data-w="unknown-token" hidden></div>');
+  function check() {
+    var bad = G.unknownTokens(ta.value);
+    box.hidden = !bad.length;
+    box.textContent = bad.length ? t('settings.unknownToken', 'Not a known field, sent as written: {tokens}', { tokens: bad.join(', ') }) : '';
+  }
+  ta.addEventListener('input', check);
+  check();
+  return box;
+}
+
+function tokenChips(ta) {
   var box = h('<div class="ts-tokens"></div>');
   G.TOKENS.forEach(function (tok) {
     var c = h('<button type="button" class="ts-chip"></button>');
@@ -1795,7 +1807,7 @@ function tokenChips(ta, onChange) {
     c.addEventListener('click', function () {
       var at = ta.selectionStart === undefined ? ta.value.length : ta.selectionStart;
       ta.value = ta.value.slice(0, at) + tok.token + ta.value.slice(ta.selectionEnd || at);
-      onChange(); ta.focus();
+      ta.dispatchEvent(new Event('input', { bubbles: true })); ta.focus();
     });
     box.appendChild(c);
   });
@@ -1882,7 +1894,8 @@ function textEditor(d, draft, v, set, setValid, ctl) {
   function changed() { set(ta.value); count(); }
   ta.addEventListener('input', changed);
   ctl.appendChild(ta);
-  ctl.appendChild(tokenChips(ta, changed));
+  ctl.appendChild(tokenChips(ta));
+  ctl.appendChild(tokenWarning(ta));
   if (counter) { ctl.appendChild(counter); count(); }
 
   var nested = SCALARS.filter(function (x) { return x.nestedIn === d.key; })[0];
@@ -1897,7 +1910,8 @@ function textEditor(d, draft, v, set, setValid, ctl) {
   if (nta.value) { adv.open = true; }
   function nset() { if (nta.value.trim()) { draft[nested.key] = nta.value; } else { delete draft[nested.key]; } }
   nta.addEventListener('input', nset);
-  adv.querySelector('.ts-adv-body').insertBefore(tokenChips(nta, nset), adv.querySelector('.ts-field-hint'));
+  adv.querySelector('.ts-adv-body').insertBefore(tokenChips(nta), adv.querySelector('.ts-field-hint'));
+  adv.querySelector('.ts-adv-body').insertBefore(tokenWarning(nta), adv.querySelector('.ts-field-hint'));
   ctl.appendChild(adv);
 }
 
